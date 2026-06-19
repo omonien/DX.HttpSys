@@ -8,11 +8,13 @@
 ///   test is a CI-sized soak (a few thousand requests in waves, a few seconds),
 ///   not the multi-hour run; the same harness scales up by raising cWaves.
 ///
-///   It measures private memory (GetProcessMemoryInfo) and the process handle
+///   It measures the working set (GetProcessMemoryInfo) and the process handle
 ///   count (GetProcessHandleCount) after a warm-up wave and again after the full
 ///   run, and fails if either grew beyond a generous tolerance — a real leak
 ///   grows without bound and trips the check, while normal allocator slack stays
-///   under it.
+///   under it. Both OS queries raise on failure so the test can't pass on a
+///   bogus zero measurement, and every request failure is counted and asserted
+///   to be zero so the leak check can't pass with a dead server.
 /// </remarks>
 /// <author>Olaf Monien</author>
 /// <created>2026-06-19</created>
@@ -37,6 +39,7 @@ implementation
 uses
   System.SysUtils,
   System.Classes,
+  System.SyncObjs,
   System.Threading,
   System.Net.HttpClient,
   Winapi.Windows,
@@ -93,43 +96,54 @@ begin
   end;
 end;
 
-function CurrentPrivateBytes: NativeUInt;
+// Returns the process working set; raises if the OS query fails so the test
+// can never pass on a bogus (zero) measurement.
+function CurrentWorkingSetBytes: NativeUInt;
 var
   LCounters: TProcessMemoryCounters;
 begin
   FillChar(LCounters, SizeOf(LCounters), 0);
   LCounters.cb := SizeOf(LCounters);
-  if GetProcessMemoryInfo(GetCurrentProcess, @LCounters, SizeOf(LCounters)) then
-    Result := LCounters.WorkingSetSize
-  else
-    Result := 0;
+  if not GetProcessMemoryInfo(GetCurrentProcess, @LCounters, SizeOf(LCounters)) then
+    raise Exception.CreateFmt('GetProcessMemoryInfo failed (%d)', [GetLastError]);
+  Result := LCounters.WorkingSetSize;
 end;
 
+// Returns the process handle count; raises if the OS query fails.
 function CurrentHandleCount: DWORD;
 begin
   if not GetProcessHandleCount(GetCurrentProcess, Result) then
-    Result := 0;
+    raise Exception.CreateFmt('GetProcessHandleCount failed (%d)', [GetLastError]);
 end;
 
-// Sends one wave of concurrent requests against the server.
-procedure RunWave(const ABaseUrl: string; ACount: Integer);
+// Sends one wave of concurrent requests; returns the number that failed so the
+// caller can prove work actually happened (a dead server would otherwise keep
+// resource usage flat and pass the leak check vacuously).
+function RunWave(const ABaseUrl: string; ACount: Integer): Integer;
+var
+  LFailures: Integer;
 begin
+  LFailures := 0;
   TParallel.&For(1, ACount,
     procedure(I: Integer)
     var
       LClient: THTTPClient;
+      LResp:   IHTTPResponse;
     begin
       LClient := THTTPClient.Create;
       try
         try
-          LClient.Get(ABaseUrl + 'soak-' + I.ToString);
+          LResp := LClient.Get(ABaseUrl + 'soak-' + I.ToString);
+          if LResp.StatusCode <> 200 then
+            TInterlocked.Increment(LFailures);
         except
-          // transient transport hiccups don't matter for the leak measurement
+          TInterlocked.Increment(LFailures);
         end;
       finally
         LClient.Free;
       end;
     end);
+  Result := LFailures;
 end;
 
 procedure TSoakTests.SustainedLoad_MemoryAndHandlesStayBounded;
@@ -144,7 +158,7 @@ var
   LBaseUrl: string;
   LMem0, LMem1:       NativeUInt;
   LHandles0, LHandles1: DWORD;
-  I: Integer;
+  LFailures, I: Integer;
 begin
   LPort := FindFreePort;
   Assert.IsTrue(LPort > 0, 'no free port');
@@ -162,13 +176,20 @@ begin
     // taking the baseline, so one-time growth isn't counted as a leak.
     RunWave(LBaseUrl, cPerWave);
     RunWave(LBaseUrl, cPerWave);
-    LMem0     := CurrentPrivateBytes;
+    LMem0     := CurrentWorkingSetBytes;
     LHandles0 := CurrentHandleCount;
 
+    // Run the measured load and prove the work actually happened — if the
+    // server stopped answering, resource usage would stay flat and the leak
+    // check would pass vacuously.
+    LFailures := 0;
     for I := 1 to cWaves do
-      RunWave(LBaseUrl, cPerWave);
+      Inc(LFailures, RunWave(LBaseUrl, cPerWave));
 
-    LMem1     := CurrentPrivateBytes;
+    Assert.AreEqual(0, LFailures,
+      Format('%d of %d requests failed under sustained load', [LFailures, cWaves * cPerWave]));
+
+    LMem1     := CurrentWorkingSetBytes;
     LHandles1 := CurrentHandleCount;
 
     Assert.IsTrue(LMem1 <= LMem0 + cMemToleranceB,

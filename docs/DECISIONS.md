@@ -117,15 +117,6 @@ Send returns. The unknown-header array is sized to the worst case (all headers u
 purpose — a later trim would reallocate and invalidate `pUnknownHeaders`. (A `Send` runs
 once per response object, so "once per Send" and "once per instance" coincide in practice.)
 
-## Phase status
-
-- **Phase 1 (PR #1, merged):** Windows-only Core compiles clean (Win32+Win64), API smoke
-  tests green (6/6, 0 leaks). Self-review + both GitHub bots (Augment, Copilot) addressed
-  over four rounds.
-- **Phase 2 (PR #2):** Server serves requests end-to-end. Response header transmission,
-  Server header pass-through, QueueLength via HttpSetRequestQueueProperty (A-3 resolved),
-  E2E integration tests (12/12, 0 leaks), and a live-verified standalone demo.
-
 ### A-5 — Each request owns its receive buffer (no copy) — fixes cross-talk under load
 **Decision:** The receiver thread allocates a **fresh buffer per request**, lets HTTP.sys
 write the `HTTP_REQUEST` directly into it, and transfers **ownership** of that buffer to
@@ -183,13 +174,6 @@ drain reclaims work-item buffers that would otherwise leak.
 The receiver also breaks its loop on `ERROR_INVALID_HANDLE` / `ERROR_OPERATION_ABORTED`
 (the queue handle being closed during shutdown) instead of spinning on a dead handle.
 
-## Phase status (updated)
-
-- **Phase 3 (PR #3):** Threading hardened and proven under load. The concurrency harness
-  found three real bugs that single-request tests missed — request cross-talk (A-5), empty
-  bodies under load (A-6), and a shutdown deadlock (A-7) — all root-caused and fixed.
-  IPv6 RemoteIP now formats correctly (`::1`). Full suite 14/14, 0 leaks, Win32 + Win64.
-
 ### A-8 — Oversized requests are rejected (431 + disconnect); buffer growth is defensive
 **Decision:** When a request's headers do not fit even after growing the receive buffer to
 its 1 MB cap, the receiver sends a **431 (Request Header Fields Too Large) with
@@ -224,13 +208,6 @@ install, so the `Web.HTTPApp` / `Web.WebReq` units link statically into the adap
 port in the parsed request and `TDXHttpSysRequest` doesn't carry it. WebModules essentially
 never need it; revisit only if a real use appears (YAGNI).
 
-## Phase status (updated)
-
-- **Phase 4 (PR #4):** WebBroker adapter — full `TWebRequest`/`TWebResponse` subclasses over
-  the Core, dispatched through the standard WebBroker pipeline. Builds clean Win32 + Win64.
-  3 E2E tests (real WebModule over HTTP.sys), full suite 17/17, 0 leaks; demo 03 verified
-  live with curl.
-
 ### A-11 — Soak test measures memory + handles against a warmed-up baseline
 **Decision:** The longevity test (`Test.DX.HttpSys.Soak`) runs warm-up waves first, takes a
 memory and handle-count baseline, then runs many more waves and asserts both stayed within a
@@ -242,10 +219,26 @@ mistaken for a leak; a real leak grows without bound and trips the tolerance, wh
 allocator slack stays under it. The size is CI-friendly (waves × per-wave ≈ 4000 requests,
 a few seconds); the same harness scales to a multi-hour run by raising `cWaves`.
 
-## Phase status (updated)
-
-- **Phase 6 (PR #6):** Soak/longevity test added — sustained load over many request waves
-  with memory (GetProcessMemoryInfo) and handle (GetProcessHandleCount) checks. Full suite
-  18/18, 0 leaks.
-
 <!-- New architecture decisions are appended below. -->
+
+---
+
+## Phase status
+
+Single source of truth for where each phase stands. (One section — earlier per-phase
+status blocks were consolidated here.)
+
+- **Phase 1 (PR #1, merged):** Windows-only Core, builds clean Win32+Win64, API smoke tests
+  (6/6, 0 leaks). Four bot-review rounds.
+- **Phase 2 (PR #2, merged):** Server end-to-end — header transmission, Server header,
+  QueueLength (A-3), E2E tests, standalone demo verified live.
+- **Phase 3 (PR #3, merged):** Threading hardened under load. The stress harness found three
+  real bugs single-request tests missed — cross-talk (A-5), empty bodies (A-6), shutdown
+  deadlock (A-7); all fixed. Oversized-request reject (A-8). IPv6 RemoteIP. 14/14, 0 leaks.
+- **Phase 4 (PR #4, merged):** WebBroker adapter (A-9) — `TWebRequest`/`TWebResponse` over the
+  Core, real WebModule E2E tests, demo 03 verified live. 17/17, 0 leaks.
+- **Phase 5 (PR #5, DRAFT — not merged):** WiRL adapter (A-10), best-effort, not built here;
+  removed from the build group; awaiting verification with WiRL installed.
+- **Phase 6 (PR #6):** Soak/longevity test (A-11) — bounded working set + handles under
+  sustained load. 18/18, 0 leaks.
+- **Phase 7:** Packaging, CI, README (netsh), XML docs — pending.
