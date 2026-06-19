@@ -86,7 +86,8 @@ type
     property Port:         Word     read FPort         write SetPort;
 
     // Length of the kernel request queue (default: 1000).
-    // May be changed while active; the new length is applied immediately.
+    // Configure before Start; takes effect on the next Start. (Live application
+    // while active arrives in Phase 2 — see docs/DECISIONS.md A-3.)
     property QueueLength:  Cardinal read FQueueLength   write SetQueueLength;
 
     // Number of worker threads (default: System.CPUCount * 2)
@@ -378,6 +379,14 @@ begin
 
     FActive := True;
   except
+    // Tear the worker pool down FIRST: if Create/Start partly succeeded, its
+    // threads use FApi and the queue handle, so they must be stopped before
+    // either is released — otherwise a running worker would use freed state.
+    if Assigned(FWorkerPool) then
+    begin
+      FWorkerPool.Stop;
+      FreeAndNil(FWorkerPool);
+    end;
     TeardownUrlGroup;
     if LInitialized then
       FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);

@@ -101,7 +101,7 @@ type
     HttpServerDelegationProperty             = 12
   );
 
-// Used with HttpServerQueueLengthProperty
+// Used with HttpServerBindingProperty to bind a URL group to a request queue.
 type
   HTTP_BINDING_INFO = record
     Flags:                  ULONG;
