@@ -105,13 +105,15 @@ type
     FReceiverThread:  TDXHttpSysReceiverThread;
     FWorkerThreads:   TObjectList<TDXHttpSysWorkerThread>;
     FOnError:         TOnHttpSysError;
+    FServerHeader:    string;
     FActive:          Boolean;
   public
     constructor Create(
-      const AApi:       TDXHttpSysApi;
-      AQueueHandle:     THandle;
-      AWorkerCount:     Integer;
-      AHandler:         IDXHttpSysRequestHandler);
+      const AApi:        TDXHttpSysApi;
+      AQueueHandle:      THandle;
+      AWorkerCount:      Integer;
+      AHandler:          IDXHttpSysRequestHandler;
+      const AServerHeader: string);
     destructor  Destroy; override;
 
     procedure Start;
@@ -124,6 +126,11 @@ type
     property PendingQueue: TThreadedQueue<TDXHttpSysWorkItem>
                                                    read FPendingQueue;
     property Active:       Boolean                 read FActive;
+
+    // Default Server header applied to each response before the handler runs
+    // (the handler may override it). Empty means "do not set one". Fixed at
+    // construction, so workers read it without synchronisation.
+    property ServerHeader: string read FServerHeader;
 
     // Optional error callback (e.g. for logging)
     property OnError:      TOnHttpSysError         read FOnError write FOnError;
@@ -260,6 +267,10 @@ begin
           WorkItem.QueueHandle,
           WorkItem.RequestId);
 
+        // Apply the configured Server header as a default the handler may override.
+        if FPool.ServerHeader <> '' then
+          Response.Headers['server'] := FPool.ServerHeader;
+
         try
           FPool.Handler.HandleRequest(Request, Response);
         except
@@ -291,16 +302,18 @@ end;
 // -----------------------------------------------------------------------------
 
 constructor TDXHttpSysWorkerPool.Create(
-  const AApi:     TDXHttpSysApi;
-  AQueueHandle:   THandle;
-  AWorkerCount:   Integer;
-  AHandler:       IDXHttpSysRequestHandler);
+  const AApi:        TDXHttpSysApi;
+  AQueueHandle:      THandle;
+  AWorkerCount:      Integer;
+  AHandler:          IDXHttpSysRequestHandler;
+  const AServerHeader: string);
 begin
   inherited Create;
   FApi          := AApi;
   FQueueHandle  := AQueueHandle;
   FHandler      := AHandler;
   FWorkerCount  := AWorkerCount;
+  FServerHeader := AServerHeader;
   FActive       := False;
 
   // Capacity: 10x worker count as a reasonable buffer

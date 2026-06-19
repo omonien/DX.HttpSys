@@ -37,6 +37,10 @@ Findings are judged on technical merit, not accepted blindly — a couple were
 documentation/contract mismatches, one was a real use-after-free on the partial-startup
 path, several were genuine lifecycle/leak issues.
 
+**Bot availability:** From PR #2 onward, Augment is out of credits and no longer reviews.
+The available automated reviewer is **GitHub Copilot** (plus the agent self-review). The
+cadence is unchanged; there is simply one bot instead of two.
+
 ### P-2 — GitHub repository
 The PRD (§11, Q2) targets `omonien/DX.HttpSys`. The repo is created **private** initially
 (reversible: can be made public later) so that the work can be reviewed before publication.
@@ -98,9 +102,28 @@ added to the loader). Flagged by both review bots on PR #1.
 `FQueueLength` to the queue handle right after `CreateRequestQueue` in `SetupUrlGroup`
 with `CheckResult`, and allow a live update from the setter when active.
 
+### A-4 — Response header transmission strategy
+**Decision:** Header values handed to `HttpSendHttpResponse` are backed by **instance
+fields** (`FHeaderValues`, `FHeaderNames`, `FUnknownHeaders`). Within a single `Send`, each
+array is sized **once** (in `BuildHeaders`, before the fill loop) and the raw `PAnsiChar`
+pointers are taken **after** that `SetLength`; the arrays are never resized again until the
+Send completes.
+
+**Why:** HTTP.sys reads the `HTTP_RESPONSE` struct (and the raw pointers inside it) during
+the synchronous `HttpSendHttpResponse` call. If the backing strings were locals, or were
+reallocated after a pointer was taken, the kernel would read freed/moved memory. Sizing
+each array exactly once per response and never trimming it keeps every pointer stable until
+Send returns. The unknown-header array is sized to the worst case (all headers unknown) on
+purpose — a later trim would reallocate and invalidate `pUnknownHeaders`. (A `Send` runs
+once per response object, so "once per Send" and "once per instance" coincide in practice.)
+
 ## Phase status
 
-- **Phase 1 (PR #1):** Windows-only Core compiles clean (Win32+Win64), API smoke tests
-  green (6/6, 0 leaks). Self-review + both GitHub bots (Augment, Copilot) addressed.
+- **Phase 1 (PR #1, merged):** Windows-only Core compiles clean (Win32+Win64), API smoke
+  tests green (6/6, 0 leaks). Self-review + both GitHub bots (Augment, Copilot) addressed
+  over four rounds.
+- **Phase 2 (PR #2):** Server serves requests end-to-end. Response header transmission,
+  Server header pass-through, QueueLength via HttpSetRequestQueueProperty (A-3 resolved),
+  E2E integration tests (12/12, 0 leaks), and a live-verified standalone demo.
 
 <!-- New architecture decisions are appended below. -->

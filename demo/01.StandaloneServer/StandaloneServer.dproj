@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build" ToolsVersion="4.0">
   <PropertyGroup>
-    <ProjectGuid>{7B854C7A-B6EF-425B-A454-8FBDEDE8D64B}</ProjectGuid>
+    <ProjectGuid>{F71924CB-B590-45BB-89DB-E98BB45D62BB}</ProjectGuid>
     <ProjectVersion>19.5</ProjectVersion>
     <FrameworkType>None</FrameworkType>
-    <MainSource>DX.HttpSys.Tests.dpr</MainSource>
+    <MainSource>StandaloneServer.dpr</MainSource>
     <Base>true</Base>
     <Config Condition="'$(Config)'==''">Debug</Config>
     <Platform Condition="'$(Platform)'==''">Win32</Platform>
@@ -12,25 +12,25 @@
     <AppType>Console</AppType>
   </PropertyGroup>
   <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Base)'=='true') or '$(Base_Win32)'!=''">
-    <DCC_DcuOutput>..\build\$(Platform)\$(Config)\dcu</DCC_DcuOutput>
-    <DCC_ExeOutput>..\build\$(Platform)\$(Config)</DCC_ExeOutput>
+    <DCC_DcuOutput>..\..\build\$(Platform)\$(Config)\dcu</DCC_DcuOutput>
+    <DCC_ExeOutput>..\..\build\$(Platform)\$(Config)</DCC_ExeOutput>
     <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-    <DCC_UnitSearchPath>..\libs\DUnitX\Source;..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-    <SanitizedProjectName>DX.HttpSys.Tests</SanitizedProjectName>
+    <DCC_UnitSearchPath>..\..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+    <SanitizedProjectName>StandaloneServer</SanitizedProjectName>
     <VerInfo_AutoIncBuild>false</VerInfo_AutoIncBuild>
     <VerInfo_Build>0</VerInfo_Build>
     <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
-    <VerInfo_Keys>FileVersion=1.0.0.0;ProductVersion=1.0.0.0;CompanyName=Olaf Monien;ProductName=DX.HttpSys;FileDescription=DX.HttpSys DUnitX test runner;InternalName=DX.HttpSys.Tests;LegalCopyright=Copyright © 2026 Olaf Monien (Developer Experts LLC);LegalTrademarks=;OriginalFilename=DX.HttpSys.Tests.exe;Comments=MIT License</VerInfo_Keys>
+    <VerInfo_Keys>FileVersion=1.0.0.0;ProductVersion=1.0.0.0;CompanyName=Olaf Monien;ProductName=DX.HttpSys;FileDescription=DX.HttpSys standalone server demo;InternalName=StandaloneServer;LegalCopyright=Copyright © 2026 Olaf Monien (Developer Experts LLC);LegalTrademarks=;OriginalFilename=StandaloneServer.exe;Comments=MIT License</VerInfo_Keys>
     <VerInfo_MajorVer>1</VerInfo_MajorVer>
     <VerInfo_MinorVer>0</VerInfo_MinorVer>
     <VerInfo_Release>0</VerInfo_Release>
     <VerInfo_Locale>1031</VerInfo_Locale>
   </PropertyGroup>
   <PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Base)'=='true') or '$(Base_Win64)'!=''">
-    <DCC_DcuOutput>..\build\$(Platform)\$(Config)\dcu</DCC_DcuOutput>
-    <DCC_ExeOutput>..\build\$(Platform)\$(Config)</DCC_ExeOutput>
+    <DCC_DcuOutput>..\..\build\$(Platform)\$(Config)\dcu</DCC_DcuOutput>
+    <DCC_ExeOutput>..\..\build\$(Platform)\$(Config)</DCC_ExeOutput>
     <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-    <DCC_UnitSearchPath>..\libs\DUnitX\Source;..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+    <DCC_UnitSearchPath>..\..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Cfg_1)'!=''">
     <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
@@ -63,8 +63,6 @@
     <DelphiCompile Include="$(MainSource)">
       <MainSource>MainSource</MainSource>
     </DelphiCompile>
-    <DCCReference Include="Test.DX.HttpSys.Api.pas" />
-    <DCCReference Include="Test.DX.HttpSys.Server.pas" />
   </ItemGroup>
   <ProjectExtensions>
     <Borland.Personality>Delphi.Personality.12</Borland.Personality>
@@ -72,7 +70,7 @@
     <BorlandProject>
       <Delphi.Personality>
         <Source>
-          <Source Name="MainSource">DX.HttpSys.Tests.dpr</Source>
+          <Source Name="MainSource">StandaloneServer.dpr</Source>
         </Source>
       </Delphi.Personality>
       <Platforms>
@@ -84,4 +82,3 @@
   </ProjectExtensions>
   <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')" />
 </Project>
-

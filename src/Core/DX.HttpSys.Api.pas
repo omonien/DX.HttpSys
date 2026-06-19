@@ -92,6 +92,14 @@ type
     pPropertyInfo:       Pointer;
     PropertyInfoLength:  ULONG): ULONG; stdcall;
 
+  TFnHttpSetRequestQueueProperty = function(
+    ReqQueueHandle:      THandle;
+    Property_:           HTTP_SERVER_PROPERTY;
+    pPropertyInfo:       Pointer;
+    PropertyInfoLength:  ULONG;
+    Reserved:            ULONG;
+    pReserved:           Pointer): ULONG; stdcall;
+
   TFnHttpReceiveHttpRequest = function(
     ReqQueueHandle:      THandle;
     RequestId:           HTTP_REQUEST_ID;
@@ -158,6 +166,7 @@ type
     CreateRequestQueue:       TFnHttpCreateRequestQueue;
     CloseRequestQueue:        TFnHttpCloseRequestQueue;
     SetUrlGroupProperty:      TFnHttpSetUrlGroupProperty;
+    SetRequestQueueProperty:  TFnHttpSetRequestQueueProperty;
 
     // I/O
     ReceiveHttpRequest:       TFnHttpReceiveHttpRequest;
@@ -258,6 +267,7 @@ begin
   @CreateRequestQueue       := GetProc('HttpCreateRequestQueue');
   @CloseRequestQueue        := GetProc('HttpCloseRequestQueue');
   @SetUrlGroupProperty      := GetProc('HttpSetUrlGroupProperty');
+  @SetRequestQueueProperty  := GetProc('HttpSetRequestQueueProperty');
 
   // I/O
   @ReceiveHttpRequest       := GetProc('HttpReceiveHttpRequest');
@@ -295,6 +305,7 @@ begin
   @CreateRequestQueue       := nil;
   @CloseRequestQueue        := nil;
   @SetUrlGroupProperty      := nil;
+  @SetRequestQueueProperty  := nil;
   @ReceiveHttpRequest       := nil;
   @ReceiveRequestEntityBody := nil;
   @SendHttpResponse         := nil;
