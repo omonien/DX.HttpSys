@@ -37,6 +37,10 @@ Findings are judged on technical merit, not accepted blindly — a couple were
 documentation/contract mismatches, one was a real use-after-free on the partial-startup
 path, several were genuine lifecycle/leak issues.
 
+**Bot availability:** From PR #2 onward, Augment is out of credits and no longer reviews.
+The available automated reviewer is **GitHub Copilot** (plus the agent self-review). The
+cadence is unchanged; there is simply one bot instead of two.
+
 ### P-2 — GitHub repository
 The PRD (§11, Q2) targets `omonien/DX.HttpSys`. The repo is created **private** initially
 (reversible: can be made public later) so that the work can be reviewed before publication.
