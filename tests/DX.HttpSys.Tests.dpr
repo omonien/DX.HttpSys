@@ -16,7 +16,8 @@ uses
   DUnitX.Loggers.Xml.NUnit,
   DUnitX.TestFramework,
   Test.DX.HttpSys.Api in 'Test.DX.HttpSys.Api.pas',
-  Test.DX.HttpSys.Server in 'Test.DX.HttpSys.Server.pas';
+  Test.DX.HttpSys.Server in 'Test.DX.HttpSys.Server.pas',
+  Test.DX.HttpSys.Stress in 'Test.DX.HttpSys.Stress.pas';
 
 var
   LRunner: ITestRunner;
@@ -25,6 +26,8 @@ var
   LNUnitLogger: ITestLogger;
 
 begin
+  // Surface any leaked object at shutdown (PRD section 9.6 leak gate).
+  ReportMemoryLeaksOnShutdown := True;
   try
     TDUnitX.CheckCommandLine;
 

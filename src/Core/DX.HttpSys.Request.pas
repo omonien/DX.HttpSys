@@ -300,63 +300,106 @@ var
   BytesRead:    ULONG;
   Result_:      ULONG;
   MemStream:    TMemoryStream;
+  I:            Integer;
+  Chunk:        PHTTP_DATA_CHUNK;
+  MoreExists:   Boolean;
 begin
   if FBodyLoaded then
     Exit(FBody);
 
-  FBodyLoaded := True;
-
   if FContentLength = 0 then
-    Exit(nil);
+  begin
+    FBodyLoaded := True;
+    Exit(nil); // no body — Body returns nil by convention
+  end;
 
   MemStream := TMemoryStream.Create;
-  SetLength(Buffer, CHUNK_SIZE);
-
-  repeat
-    BytesRead := 0;
-    Result_ := FApi.ReceiveRequestEntityBody(
-      FQueueHandle,
-      FRequestId,
-      0,
-      @Buffer[0],
-      CHUNK_SIZE,
-      @BytesRead,
-      nil);
-
-    if (Result_ = ERROR_SUCCESS) and (BytesRead > 0) then
-      MemStream.Write(Buffer[0], BytesRead)
-    else if Result_ = ERROR_HANDLE_EOF then
-      Break
-    else if Result_ <> ERROR_SUCCESS then
+  try
+    // 1) HttpReceiveHttpRequest was called with COPY_BODY, so any body that fit
+    //    in the request buffer is already present as inline entity chunks. Read
+    //    those first — they will NOT be returned again by ReceiveRequestEntityBody.
+    if (FRawRequest^.EntityChunkCount > 0) and (FRawRequest^.pEntityChunks <> nil) then
     begin
-      MemStream.Free;
-      TDXHttpSysApi.CheckResult(Result_, 'ReceiveRequestEntityBody');
+      Chunk := FRawRequest^.pEntityChunks;
+      for I := 0 to FRawRequest^.EntityChunkCount - 1 do
+      begin
+        if (Chunk^.DataChunkType = HttpDataChunkFromMemory) and
+           (Chunk^.FromMemory.pBuffer <> nil) and
+           (Chunk^.FromMemory.BufferLength > 0) then
+          MemStream.Write(PByte(Chunk^.FromMemory.pBuffer)^, Chunk^.FromMemory.BufferLength);
+        Inc(Chunk);
+      end;
     end;
-  until (Result_ = ERROR_HANDLE_EOF) or (BytesRead = 0);
+
+    // 2) If the body did not fully fit, pull the remainder from the kernel.
+    MoreExists :=
+      (FRawRequest^.Flags and HTTP_REQUEST_FLAG_MORE_ENTITY_BODY_EXISTS) <> 0;
+    if MoreExists then
+    begin
+      SetLength(Buffer, CHUNK_SIZE);
+      repeat
+        BytesRead := 0;
+        Result_ := FApi.ReceiveRequestEntityBody(
+          FQueueHandle,
+          FRequestId,
+          0,
+          @Buffer[0],
+          CHUNK_SIZE,
+          @BytesRead,
+          nil);
+
+        if (Result_ = ERROR_SUCCESS) and (BytesRead > 0) then
+          MemStream.Write(Buffer[0], BytesRead)
+        else if Result_ = ERROR_HANDLE_EOF then
+          Break
+        else if Result_ <> ERROR_SUCCESS then
+          TDXHttpSysApi.CheckResult(Result_, 'ReceiveRequestEntityBody');
+      until (Result_ = ERROR_HANDLE_EOF) or (BytesRead = 0);
+    end;
+  except
+    MemStream.Free;
+    raise;
+  end;
 
   MemStream.Position := 0;
   FBody := MemStream;
+  // Set only after a successful read: HTTP.sys delivers the body once, but a
+  // failure mid-read should surface (and not be cached as an empty body).
+  FBodyLoaded := True;
   Result := FBody;
 end;
 
 function TDXHttpSysRequest.SockAddrToIP(ASockAddr: PSOCKADDR): string;
+type
+  // Minimal sockaddr_in6 — only the address field is needed for formatting.
+  // Winapi.WinSock2 does not declare this, and we avoid pulling in extra units.
+  TSockAddrIn6Min = record
+    sin6_family:   USHORT;
+    sin6_port:     USHORT;
+    sin6_flowinfo: ULONG;
+    sin6_addr:     array[0..15] of Byte;
+    sin6_scope_id: ULONG;
+  end;
+  PSockAddrIn6Min = ^TSockAddrIn6Min;
+const
+  cMaxIpLen = 46; // enough for the longest IPv6 textual form
 var
-  SA4: PSockAddrIn absolute ASockAddr;
-  // IPv6: PSockAddrIn6 – TODO: Milestone 2
+  SA4:  PSockAddrIn absolute ASockAddr;
+  SA6:  PSockAddrIn6Min absolute ASockAddr;
+  LBuf: array[0..cMaxIpLen - 1] of AnsiChar;
 begin
   Result := '';
   if ASockAddr = nil then
     Exit;
 
+  // inet_ntop formats both IPv4 and IPv6 correctly (including loopback ::1).
   case ASockAddr^.sa_family of
     AF_INET:
-      Result := Format('%d.%d.%d.%d', [
-        Byte(SA4^.sin_addr.S_un_b.s_b1),
-        Byte(SA4^.sin_addr.S_un_b.s_b2),
-        Byte(SA4^.sin_addr.S_un_b.s_b3),
-        Byte(SA4^.sin_addr.S_un_b.s_b4)]);
+      if inet_ntop(AF_INET, @SA4^.sin_addr, @LBuf[0], Length(LBuf)) <> nil then
+        Result := string(AnsiString(PAnsiChar(@LBuf[0])));
     AF_INET6:
-      Result := '[IPv6]'; // TODO: full IPv6 formatting
+      if inet_ntop(AF_INET6, @SA6^.sin6_addr, @LBuf[0], Length(LBuf)) <> nil then
+        Result := string(AnsiString(PAnsiChar(@LBuf[0])));
   end;
 end;
 
