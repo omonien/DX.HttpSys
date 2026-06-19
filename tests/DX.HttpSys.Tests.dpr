@@ -17,7 +17,8 @@ uses
   DUnitX.TestFramework,
   Test.DX.HttpSys.Api in 'Test.DX.HttpSys.Api.pas',
   Test.DX.HttpSys.Server in 'Test.DX.HttpSys.Server.pas',
-  Test.DX.HttpSys.Stress in 'Test.DX.HttpSys.Stress.pas';
+  Test.DX.HttpSys.Stress in 'Test.DX.HttpSys.Stress.pas',
+  Test.DX.HttpSys.WebBroker in 'Test.DX.HttpSys.WebBroker.pas';
 
 var
   LRunner: ITestRunner;
