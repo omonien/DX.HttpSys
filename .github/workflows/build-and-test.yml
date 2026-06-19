@@ -1,0 +1,62 @@
+# CI gate for DX.HttpSys (PRD §9.6).
+#
+# Delphi is commercial and is NOT available on GitHub-hosted runners, so this
+# workflow targets a SELF-HOSTED Windows runner that has Delphi installed (the
+# build script auto-detects the newest version). Set one up with the labels
+# [self-hosted, windows, delphi] and the runner will pick up this workflow.
+#
+# What it gates:
+#   * Core package builds clean on Win32 and Win64
+#   * WebBroker adapter package builds clean (Win32)
+#   * The DUnitX test runner builds and all tests pass (unit + integration +
+#     concurrency stress + soak) with no leaks
+#
+# The HTTP.sys integration/stress/soak tests bind to http://localhost:<port>/,
+# which needs no elevated rights, so the runner does not need admin or a URL ACL.
+#
+# WiRL adapter: intentionally excluded — WiRL is an external dependency that is
+# not vendored (see docs/DECISIONS.md A-10).
+
+name: Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: [ self-hosted, windows, delphi ]
+    steps:
+      - name: Checkout (with submodules for DUnitX)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build Core (Win32)
+        shell: pwsh
+        run: ./build-scripts/DelphiBuildDPROJ.ps1 -ProjectFile ./src/DX.HttpSys.Core.dproj -Platform Win32
+
+      - name: Build Core (Win64)
+        shell: pwsh
+        run: ./build-scripts/DelphiBuildDPROJ.ps1 -ProjectFile ./src/DX.HttpSys.Core.dproj -Platform Win64
+
+      - name: Build WebBroker adapter (Win32)
+        shell: pwsh
+        run: ./build-scripts/DelphiBuildDPROJ.ps1 -ProjectFile ./src/DX.HttpSys.WebBroker.dproj -Platform Win32
+
+      - name: Build test runner (Win32)
+        shell: pwsh
+        run: ./build-scripts/DelphiBuildDPROJ.ps1 -ProjectFile ./tests/DX.HttpSys.Tests.dproj -Platform Win32
+
+      - name: Run tests (fail the job on any failure or leak)
+        shell: pwsh
+        run: |
+          $exe = "./build/Win32/Debug/DX.HttpSys.Tests.exe"
+          & $exe --exitbehavior:Continue
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Test runner exited with code $LASTEXITCODE"
+            exit 1
+          }

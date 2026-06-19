@@ -7,9 +7,9 @@
     <Projects Include="src\DX.HttpSys.Core.dproj">
       <Dependencies/>
     </Projects>
-    <Projects Include="src\DX.HttpSys.WiRL.dproj">
-      <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
-    </Projects>
+    <!-- DX.HttpSys.WiRL is intentionally NOT in the build group: WiRL is an
+         external dependency that is not vendored here. Add it to a local group
+         once WiRL is on the library path. See docs/DECISIONS.md (A-10). -->
     <Projects Include="src\DX.HttpSys.WebBroker.dproj">
       <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
     </Projects>

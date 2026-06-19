@@ -219,6 +219,17 @@ mistaken for a leak; a real leak grows without bound and trips the tolerance, wh
 allocator slack stays under it. The size is CI-friendly (waves × per-wave ≈ 4000 requests,
 a few seconds); the same harness scales to a multi-hour run by raising `cWaves`.
 
+### A-12 — CI targets a self-hosted Windows runner with Delphi
+**Decision:** The GitHub Actions workflow (`.github/workflows/build-and-test.yml`) runs on a
+**self-hosted** runner labelled `[self-hosted, windows, delphi]`, not a GitHub-hosted runner.
+
+**Why:** Delphi is commercial and is not available on GitHub-hosted runners, so a real
+compile+test gate (PRD §9.6) can only run where Delphi is installed. The workflow builds the
+Core (Win32+Win64) and WebBroker package, builds the DUnitX runner, and runs the full suite,
+failing the job on any test failure or leak. The HTTP.sys integration/stress/soak tests bind
+to `localhost`, so the runner needs no admin rights or URL ACL. The WiRL adapter is excluded
+(A-10).
+
 <!-- New architecture decisions are appended below. -->
 
 ---
@@ -241,4 +252,7 @@ status blocks were consolidated here.)
   removed from the build group; awaiting verification with WiRL installed.
 - **Phase 6 (PR #6):** Soak/longevity test (A-11) — bounded working set + handles under
   sustained load. 18/18, 0 leaks.
-- **Phase 7:** Packaging, CI, README (netsh), XML docs — pending.
+- **Phase 7 (PR #7):** Packaging + CI + docs — self-hosted CI workflow (A-12), README updated
+  (status, roadmap, WebBroker/WiRL quick-starts), XML doc comments on the public types, and
+  the project group builds clean as one unit (Core + WebBroker + Tests + demos). WiRL removed
+  from the group so the group is buildable without WiRL.
