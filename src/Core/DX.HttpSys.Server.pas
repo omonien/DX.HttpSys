@@ -382,9 +382,8 @@ begin
 
     // Start worker pool
     FWorkerPool := TDXHttpSysWorkerPool.Create(
-      FApi, FReqQueueHandle, FThreadCount, FHandler);
+      FApi, FReqQueueHandle, FThreadCount, FHandler, FServerHeader);
     FWorkerPool.OnError := FOnError;
-    FWorkerPool.ServerHeader := FServerHeader;
     FWorkerPool.Start;
 
     FActive := True;

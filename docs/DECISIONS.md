@@ -100,15 +100,18 @@ with `CheckResult`, and allow a live update from the setter when active.
 
 ### A-4 — Response header transmission strategy
 **Decision:** Header values handed to `HttpSendHttpResponse` are backed by **instance
-fields** (`FHeaderValues`, `FHeaderNames`, `FUnknownHeaders`), sized once up front, with
-the raw `PAnsiChar` pointers taken only after the final `SetLength`.
+fields** (`FHeaderValues`, `FHeaderNames`, `FUnknownHeaders`). Within a single `Send`, each
+array is sized **once** (in `BuildHeaders`, before the fill loop) and the raw `PAnsiChar`
+pointers are taken **after** that `SetLength`; the arrays are never resized again until the
+Send completes.
 
 **Why:** HTTP.sys reads the `HTTP_RESPONSE` struct (and the raw pointers inside it) during
-the synchronous `HttpSendHttpResponse` call. If the backing strings were locals or were
-reallocated after the pointer was taken, the kernel would read freed/moved memory. Sizing
-the arrays once and never trimming them keeps every pointer stable until Send returns.
-The unknown-header array is sized to the worst case (all headers unknown) on purpose — a
-later trim would reallocate and invalidate `pUnknownHeaders`.
+the synchronous `HttpSendHttpResponse` call. If the backing strings were locals, or were
+reallocated after a pointer was taken, the kernel would read freed/moved memory. Sizing
+each array exactly once per response and never trimming it keeps every pointer stable until
+Send returns. The unknown-header array is sized to the worst case (all headers unknown) on
+purpose — a later trim would reallocate and invalidate `pUnknownHeaders`. (A `Send` runs
+once per response object, so "once per Send" and "once per instance" coincide in practice.)
 
 ## Phase status
 

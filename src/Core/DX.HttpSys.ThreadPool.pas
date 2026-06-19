@@ -109,10 +109,11 @@ type
     FActive:          Boolean;
   public
     constructor Create(
-      const AApi:       TDXHttpSysApi;
-      AQueueHandle:     THandle;
-      AWorkerCount:     Integer;
-      AHandler:         IDXHttpSysRequestHandler);
+      const AApi:        TDXHttpSysApi;
+      AQueueHandle:      THandle;
+      AWorkerCount:      Integer;
+      AHandler:          IDXHttpSysRequestHandler;
+      const AServerHeader: string);
     destructor  Destroy; override;
 
     procedure Start;
@@ -127,8 +128,9 @@ type
     property Active:       Boolean                 read FActive;
 
     // Default Server header applied to each response before the handler runs
-    // (the handler may override it). Empty means "do not set one".
-    property ServerHeader: string read FServerHeader write FServerHeader;
+    // (the handler may override it). Empty means "do not set one". Fixed at
+    // construction, so workers read it without synchronisation.
+    property ServerHeader: string read FServerHeader;
 
     // Optional error callback (e.g. for logging)
     property OnError:      TOnHttpSysError         read FOnError write FOnError;
@@ -300,16 +302,18 @@ end;
 // -----------------------------------------------------------------------------
 
 constructor TDXHttpSysWorkerPool.Create(
-  const AApi:     TDXHttpSysApi;
-  AQueueHandle:   THandle;
-  AWorkerCount:   Integer;
-  AHandler:       IDXHttpSysRequestHandler);
+  const AApi:        TDXHttpSysApi;
+  AQueueHandle:      THandle;
+  AWorkerCount:      Integer;
+  AHandler:          IDXHttpSysRequestHandler;
+  const AServerHeader: string);
 begin
   inherited Create;
   FApi          := AApi;
   FQueueHandle  := AQueueHandle;
   FHandler      := AHandler;
   FWorkerCount  := AWorkerCount;
+  FServerHeader := AServerHeader;
   FActive       := False;
 
   // Capacity: 10x worker count as a reasonable buffer
