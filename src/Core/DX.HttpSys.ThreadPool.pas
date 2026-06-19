@@ -82,6 +82,10 @@ type
   TDXHttpSysReceiverThread = class(TThread)
   private
     FPool: TDXHttpSysWorkerPool;
+    // Sends a minimal status-only response and disconnects, removing a request
+    // we cannot service (e.g. oversized headers) from the kernel queue.
+    procedure RejectRequest(ARequestId: HTTP_REQUEST_ID;
+      AStatus: USHORT; const AReason: AnsiString);
   protected
     procedure Execute; override;
   public
@@ -163,6 +167,25 @@ begin
   inherited Create(False);
 end;
 
+procedure TDXHttpSysReceiverThread.RejectRequest(ARequestId: HTTP_REQUEST_ID;
+  AStatus: USHORT; const AReason: AnsiString);
+var
+  Resp:      HTTP_RESPONSE;
+  BytesSent: ULONG;
+begin
+  FillChar(Resp, SizeOf(Resp), 0);
+  Resp.Version      := HTTPAPI_VERSION_2;
+  Resp.StatusCode   := AStatus;
+  Resp.pReason      := PAnsiChar(AReason);
+  Resp.ReasonLength := Length(AReason);
+  BytesSent := 0;
+  // Best-effort: ignore the result (the client may already be gone).
+  FPool.Api.SendHttpResponse(
+    FPool.QueueHandle, ARequestId,
+    HTTP_SEND_RESPONSE_FLAG_DISCONNECT,
+    @Resp, nil, @BytesSent, nil, 0, nil, nil);
+end;
+
 procedure TDXHttpSysReceiverThread.Execute;
 const
   // Upper bound for the request header buffer; a request whose headers exceed
@@ -211,7 +234,11 @@ begin
           EDXHttpSysError.CreateWin32(Result_,
             Format('Request headers exceed %d bytes', [cMaxRequestBufferSize])),
           'Receiver');
-        Result_ := ERROR_MORE_DATA; // signal "skip" below
+        // Reject and disconnect so HTTP.sys removes the request from the queue.
+        // Leaving it pending would have it re-delivered on the next receive,
+        // spinning forever and blocking later requests (a DoS vector).
+        RejectRequest(LRequestId, 431, 'Request Header Fields Too Large');
+        Result_ := ERROR_MORE_DATA; // signal "handled, skip" below
         Break;
       end;
 

@@ -326,7 +326,7 @@ begin
         if (Chunk^.DataChunkType = HttpDataChunkFromMemory) and
            (Chunk^.FromMemory.pBuffer <> nil) and
            (Chunk^.FromMemory.BufferLength > 0) then
-          MemStream.Write(Chunk^.FromMemory.pBuffer^, Chunk^.FromMemory.BufferLength);
+          MemStream.Write(PByte(Chunk^.FromMemory.pBuffer)^, Chunk^.FromMemory.BufferLength);
         Inc(Chunk);
       end;
     end;

@@ -190,4 +190,22 @@ The receiver also breaks its loop on `ERROR_INVALID_HANDLE` / `ERROR_OPERATION_A
   bodies under load (A-6), and a shutdown deadlock (A-7) — all root-caused and fixed.
   IPv6 RemoteIP now formats correctly (`::1`). Full suite 14/14, 0 leaks, Win32 + Win64.
 
+### A-8 — Oversized requests are rejected (431 + disconnect); buffer growth is defensive
+**Decision:** When a request's headers do not fit even after growing the receive buffer to
+its 1 MB cap, the receiver sends a **431 (Request Header Fields Too Large) with
+`HTTP_SEND_RESPONSE_FLAG_DISCONNECT`** and moves on.
+
+**Why (flagged by Copilot on PR #3):** An `ERROR_MORE_DATA` request stays **pending** in the
+kernel queue until it is either fully received or answered. If we just skipped it, the very
+next `HttpReceiveHttpRequest` would return the same oversized request again — a tight loop
+that spins the CPU, spams logs, and blocks every later request (a DoS vector). Sending a
+response (with disconnect) removes it from the queue.
+
+**Note on HTTP.sys's own limit:** In practice HTTP.sys enforces its own default ~16 KB total
+request-header limit and answers 400 itself **before** the request ever reaches our receiver,
+so the `ERROR_MORE_DATA` growth path is only exercised when that kernel limit is raised via
+the registry (`MaxRequestBytes`/`MaxFieldLength`). The growth + reject logic is therefore a
+correct defensive measure rather than a hot path, and is not unit-tested (it would require
+changing machine-wide HTTP.sys registry settings).
+
 <!-- New architecture decisions are appended below. -->
