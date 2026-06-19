@@ -15,7 +15,7 @@
     <DCC_DcuOutput>..\build\$(Platform)\$(Config)\dcu</DCC_DcuOutput>
     <DCC_ExeOutput>..\build\$(Platform)\$(Config)</DCC_ExeOutput>
     <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-    <DCC_UnitSearchPath>..\libs\DUnitX\Source;..\src\Adapters;..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+    <DCC_UnitSearchPath>..\libs\DUnitX\Source;..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     <SanitizedProjectName>DX.HttpSys.Tests</SanitizedProjectName>
     <VerInfo_AutoIncBuild>false</VerInfo_AutoIncBuild>
     <VerInfo_Build>0</VerInfo_Build>
@@ -30,7 +30,7 @@
     <DCC_DcuOutput>..\build\$(Platform)\$(Config)\dcu</DCC_DcuOutput>
     <DCC_ExeOutput>..\build\$(Platform)\$(Config)</DCC_ExeOutput>
     <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-    <DCC_UnitSearchPath>..\libs\DUnitX\Source;..\src\Adapters;..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+    <DCC_UnitSearchPath>..\libs\DUnitX\Source;..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Cfg_1)'!=''">
     <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
@@ -63,7 +63,7 @@
     <DelphiCompile Include="$(MainSource)">
       <MainSource>MainSource</MainSource>
     </DelphiCompile>
-    <DCCReference Include="Test.DX.HttpSys.Sample.pas" />
+    <DCCReference Include="Test.DX.HttpSys.Api.pas" />
   </ItemGroup>
   <ProjectExtensions>
     <Borland.Personality>Delphi.Personality.12</Borland.Personality>

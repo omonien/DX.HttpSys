@@ -25,8 +25,6 @@
 /// <license>MIT</license>
 unit DX.HttpSys.WiRL;
 
-{$IFDEF MSWINDOWS}
-
 interface
 
 uses
@@ -262,7 +260,5 @@ end;
 
 initialization
   TWiRLServerRegistry.Instance.RegisterServer<TWiRLHttpSysServer>('HttpSys');
-
-{$ENDIF MSWINDOWS}
 
 end.

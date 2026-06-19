@@ -26,8 +26,6 @@
 
 unit DX.HttpSys.Server;
 
-{$IFDEF MSWINDOWS}
-
 interface
 
 uses
@@ -69,10 +67,13 @@ type
     FOnError:         TOnHttpSysError;
 
     procedure CheckNotActive(const AProperty: string);
-    procedure CheckActive(const AOperation: string);
     procedure SetupUrlGroup;
     procedure TeardownUrlGroup;
+    procedure SetPort(AValue: Word);
     procedure SetQueueLength(AValue: Cardinal);
+    procedure SetThreadCount(AValue: Integer);
+    procedure SetServerHeader(const AValue: string);
+    procedure SetHandler(const AValue: IDXHttpSysRequestHandler);
   public
     constructor Create;
     destructor  Destroy; override;
@@ -80,23 +81,25 @@ type
     // --- Configuration (set before Start) ---
 
     // Listening port (default: 8080)
-    // Only used for automatic prefix generation when
-    // AddUrlPrefix is not called explicitly.
-    property Port:         Word     read FPort         write FPort;
+    // Only used for automatic prefix generation by UseLocalhost /
+    // UseAllInterfaces when AddUrlPrefix is not called explicitly.
+    property Port:         Word     read FPort         write SetPort;
 
-    // Length of the kernel request queue (default: 1000)
-    property QueueLength:  Cardinal read FQueueLength   write FQueueLength;
+    // Length of the kernel request queue (default: 1000).
+    // Configure before Start; takes effect on the next Start. (Live application
+    // while active arrives in Phase 2 — see docs/DECISIONS.md A-3.)
+    property QueueLength:  Cardinal read FQueueLength   write SetQueueLength;
 
     // Number of worker threads (default: System.CPUCount * 2)
-    property ThreadCount:  Integer  read FThreadCount   write FThreadCount;
+    property ThreadCount:  Integer  read FThreadCount   write SetThreadCount;
 
     // Server header value (default: 'DX.HttpSys/1.0')
     // HTTP.sys automatically appends ' Microsoft-HTTPAPI/2.0'
-    property ServerHeader: string   read FServerHeader  write FServerHeader;
+    property ServerHeader: string   read FServerHeader  write SetServerHeader;
 
     // The handler interface – must be set before Start
     property Handler:      IDXHttpSysRequestHandler
-                                    read FHandler       write FHandler;
+                                    read FHandler       write SetHandler;
 
     // Optional error callback for logging
     property OnError:      TOnHttpSysError
@@ -155,7 +158,7 @@ destructor TDXHttpSysServer.Destroy;
 begin
   if FActive then
     Stop;
-  FUrlPrefixes.Free;
+  FreeAndNil(FUrlPrefixes);
   inherited;
 end;
 
@@ -166,11 +169,32 @@ begin
       Format('Property "%s" can only be changed before Start', [AProperty]));
 end;
 
-procedure TDXHttpSysServer.CheckActive(const AOperation: string);
+procedure TDXHttpSysServer.SetPort(AValue: Word);
 begin
-  if not FActive then
-    raise EDXHttpSysError.CreateWin32(0,
-      Format('Operation "%s" requires an active server', [AOperation]));
+  CheckNotActive('Port');
+  FPort := AValue;
+end;
+
+procedure TDXHttpSysServer.SetThreadCount(AValue: Integer);
+begin
+  CheckNotActive('ThreadCount');
+  // The worker pool sizes its queue and spawns threads from this count, so a
+  // zero/negative value would leave the server unable to process requests.
+  if AValue < 1 then
+    raise EDXHttpSysError.CreateWin32(0, 'ThreadCount must be at least 1');
+  FThreadCount := AValue;
+end;
+
+procedure TDXHttpSysServer.SetServerHeader(const AValue: string);
+begin
+  CheckNotActive('ServerHeader');
+  FServerHeader := AValue;
+end;
+
+procedure TDXHttpSysServer.SetHandler(const AValue: IDXHttpSysRequestHandler);
+begin
+  CheckNotActive('Handler');
+  FHandler := AValue;
 end;
 
 // --- URL management ---
@@ -246,12 +270,15 @@ begin
       FReqQueueHandle),
     'CreateRequestQueue');
 
-  // Set queue length
-  SetQueueLength(FQueueLength);
+  // Queue length is a request-queue property and must be applied to the queue
+  // handle via HttpSetRequestQueueProperty (not the URL group). That API is wired
+  // up together with full server runtime behaviour in Phase 2; applying it here
+  // through SetUrlGroupProperty would silently no-op, so it is deliberately not
+  // attempted yet. FQueueLength is retained as configuration until then.
 
   // Bind URL group to request queue
   FillChar(BindingInfo, SizeOf(BindingInfo), 0);
-  BindingInfo.Flags              := 1; // HTTP_PROPERTY_FLAG_PRESENT
+  BindingInfo.Flags              := HTTP_PROPERTY_FLAG_PRESENT;
   BindingInfo.RequestQueueHandle := FReqQueueHandle;
   TDXHttpSysApi.CheckResult(
     FApi.SetUrlGroupProperty(
@@ -272,8 +299,11 @@ procedure TDXHttpSysServer.TeardownUrlGroup;
 var
   Item: TDXUrlPrefix;
 begin
+  // FApi may be nil if Start failed before the API was loaded; the HTTP.sys
+  // handles are then still zero, but guard explicitly so a future caller order
+  // cannot dereference a nil API.
   // Remove URL prefixes
-  if FUrlGroupId <> 0 then
+  if Assigned(FApi) and (FUrlGroupId <> 0) then
   begin
     for Item in FUrlPrefixes do
       FApi.RemoveUrlFromUrlGroup(FUrlGroupId, PWideChar(Item.Prefix), 0);
@@ -290,7 +320,7 @@ begin
   end;
 
   // Close server session
-  if FSessionId <> 0 then
+  if Assigned(FApi) and (FSessionId <> 0) then
   begin
     FApi.CloseServerSession(FSessionId);
     FSessionId := 0;
@@ -299,18 +329,20 @@ end;
 
 procedure TDXHttpSysServer.SetQueueLength(AValue: Cardinal);
 begin
+  // Live application of the queue length (HttpSetRequestQueueProperty on the
+  // queue handle, with status checking) lands in Phase 2 together with the rest
+  // of the server runtime. For now this only stores the configured value, which
+  // takes effect on the next Start. Allowing it while active would need the
+  // request-queue property API that is not wired up yet.
+  CheckNotActive('QueueLength');
   FQueueLength := AValue;
-  if FActive and (FUrlGroupId <> 0) then
-    FApi.SetUrlGroupProperty(
-      FUrlGroupId,
-      HttpServerQueueLengthProperty,
-      @FQueueLength,
-      SizeOf(FQueueLength));
 end;
 
 // --- Lifecycle ---
 
 procedure TDXHttpSysServer.Start;
+var
+  LInitialized: Boolean;
 begin
   if FActive then
     Exit;
@@ -324,16 +356,23 @@ begin
       'At least one URL prefix must be registered via AddUrlPrefix');
 
   // Load API
+  FApi := TDXHttpSysApi.Create;
   if not FApi.Load then
+  begin
+    FreeAndNil(FApi);
     raise EDXHttpSysError.CreateWin32(GetLastError,
       'httpapi.dll could not be loaded');
+  end;
 
-  // Initialize
-  TDXHttpSysApi.CheckResult(
-    FApi.Initialize(HTTPAPI_VERSION_2, HTTP_INITIALIZE_SERVER, nil),
-    'HttpInitialize');
-
+  // Everything from HttpInitialize onwards is guarded, so a failure at any step
+  // (including HttpInitialize itself) tears the partial startup back down.
+  LInitialized := False;
   try
+    TDXHttpSysApi.CheckResult(
+      FApi.InitializeV2(HTTP_INITIALIZE_SERVER),
+      'HttpInitialize');
+    LInitialized := True;
+
     SetupUrlGroup;
 
     // Start worker pool
@@ -344,9 +383,18 @@ begin
 
     FActive := True;
   except
+    // Tear the worker pool down FIRST: if Create/Start partly succeeded, its
+    // threads use FApi and the queue handle, so they must be stopped before
+    // either is released — otherwise a running worker would use freed state.
+    if Assigned(FWorkerPool) then
+    begin
+      FWorkerPool.Stop;
+      FreeAndNil(FWorkerPool);
+    end;
     TeardownUrlGroup;
-    FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
-    FApi.Unload;
+    if LInitialized then
+      FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
+    FreeAndNil(FApi);
     raise;
   end;
 end;
@@ -375,15 +423,16 @@ begin
 
   TeardownUrlGroup;
 
-  FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
-  FApi.Unload;
+  if Assigned(FApi) then
+  begin
+    FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
+    FreeAndNil(FApi);
+  end;
 end;
 
 function TDXHttpSysServer.GetServerImplementation: TObject;
 begin
   Result := Self;
 end;
-
-{$ENDIF MSWINDOWS}
 
 end.

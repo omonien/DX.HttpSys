@@ -14,18 +14,21 @@
 /// <license>MIT</license>
 unit DX.HttpSys.Api.Types;
 
-{$IFDEF MSWINDOWS}
-
 interface
 
 uses
-  Winapi.Windows;
+  Winapi.Windows,
+  Winapi.WinSock2;
 
 // -----------------------------------------------------------------------------
 // HTTP API Version
 // -----------------------------------------------------------------------------
 
 type
+  // SDK string-pointer aliases not present in Winapi.Windows.
+  PCWSTR = PWideChar;  // LPCWSTR — wide, const, null-terminated
+  PCSTR  = PAnsiChar;  // LPCSTR  — narrow, const, null-terminated
+
   THTTP_VERSION = record
     MajorVersion: USHORT;
     MinorVersion: USHORT;
@@ -67,11 +70,21 @@ type
 
   HTTP_OPAQUE_ID = UInt64;
 
+const
+  // Sentinel "no specific request" id for HttpReceiveHttpRequest (HTTP_NULL_ID).
+  HTTP_NULL_ID: HTTP_REQUEST_ID = 0;
+
+  // HTTP_PROPERTY_FLAGS.Present bit — marks an SDK property struct as "set".
+  HTTP_PROPERTY_FLAG_PRESENT = $00000001;
+
 // -----------------------------------------------------------------------------
 // HTTP_SERVER_PROPERTY – property enums for SetUrlGroupProperty etc.
 // -----------------------------------------------------------------------------
 
 type
+  // HTTP_SERVER_PROPERTY — order and values per the Windows SDK (http.h).
+  // These ordinals are passed verbatim to HttpSetUrlGroupProperty etc., so the
+  // enumeration MUST mirror the SDK exactly; do not reorder.
   HTTP_SERVER_PROPERTY = (
     HttpServerAuthenticationProperty         = 0,
     HttpServerLoggingProperty                = 1,
@@ -79,14 +92,16 @@ type
     HttpServerTimeoutsProperty               = 3,
     HttpServerQueueLengthProperty            = 4,
     HttpServerStateProperty                  = 5,
-    HttpServerC506DefenseProperty            = 6,
-    HttpServerUriProperty                    = 7,
-    HttpServerChannelBindProperty            = 8,
-    HttpServerProtectionLevelProperty        = 9,
-    HttpServerDelegationProperty             = 10
+    HttpServer503VerbosityProperty           = 6,
+    HttpServerBindingProperty                = 7,
+    HttpServerExtendedAuthenticationProperty = 8,
+    HttpServerListenEndpointProperty         = 9,
+    HttpServerChannelBindProperty            = 10,
+    HttpServerProtectionLevelProperty        = 11,
+    HttpServerDelegationProperty             = 12
   );
 
-// Used with HttpServerQueueLengthProperty
+// Used with HttpServerBindingProperty to bind a URL group to a request queue.
 type
   HTTP_BINDING_INFO = record
     Flags:                  ULONG;
@@ -358,7 +373,5 @@ type
   PHTTP_RESPONSE = ^HTTP_RESPONSE;
 
 implementation
-
-{$ENDIF MSWINDOWS}
 
 end.

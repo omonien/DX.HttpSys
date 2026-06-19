@@ -15,8 +15,6 @@
 /// <license>MIT</license>
 unit DX.HttpSys.Response;
 
-{$IFDEF MSWINDOWS}
-
 interface
 
 uses
@@ -44,6 +42,7 @@ type
     FSent:         Boolean;
 
     procedure SetStatusCode(AValue: Word);
+    function  GetReasonPhrase: string;
     procedure SetReasonPhrase(const AValue: string);
     procedure CheckNotSent;
     function  BuildHttpResponse(
@@ -63,7 +62,7 @@ type
 
     // Reason phrase (default: derived from StatusCode)
     property ReasonPhrase:  string
-      read (string(FReasonPhrase))
+      read GetReasonPhrase
       write SetReasonPhrase;
 
     // Response headers
@@ -153,8 +152,8 @@ end;
 
 destructor TDXHttpSysResponse.Destroy;
 begin
-  FHeaders.Free;
-  FBody.Free;
+  FreeAndNil(FHeaders);
+  FreeAndNil(FBody);
   inherited;
 end;
 
@@ -163,6 +162,11 @@ begin
   CheckNotSent;
   FStatusCode   := AValue;
   FReasonPhrase := DefaultReasonPhrase(AValue);
+end;
+
+function TDXHttpSysResponse.GetReasonPhrase: string;
+begin
+  Result := string(FReasonPhrase);
 end;
 
 procedure TDXHttpSysResponse.SetReasonPhrase(const AValue: string);
@@ -275,7 +279,5 @@ begin
     ReasonPhrase := AReason;
   Send;
 end;
-
-{$ENDIF MSWINDOWS}
 
 end.

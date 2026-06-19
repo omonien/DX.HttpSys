@@ -1,14 +1,15 @@
 ﻿/// <summary>
-///   DX.HttpSys.Api — runtime loader and function record for httpapi.dll v2.0.
+///   DX.HttpSys.Api — runtime loader and function table for httpapi.dll v2.0.
 /// </summary>
 /// <remarks>
 ///   All functions are resolved via GetProcAddress; there is no hard import link.
-///   The unit compiles on non-Windows platforms, where the function pointers are
-///   nil. EDXHttpSysNotSupported is raised on Load when running on non-Windows.
+///   TDXHttpSysApi is a class so an instance is always zero-initialised on Create
+///   (see docs/DECISIONS.md, A-2). This is a Windows-only library.
 ///
 ///   Usage:
-///     if not TDXHttpSysApi.Instance.Load then
-///       raise EDXHttpSysError.Create('httpapi.dll could not be loaded');
+///     LApi := TDXHttpSysApi.Create;
+///     if not LApi.Load then
+///       raise EDXHttpSysError.CreateWin32(GetLastError, 'httpapi.dll could not be loaded');
 /// </remarks>
 /// <author>Olaf Monien</author>
 /// <created>2026-06-19</created>
@@ -18,11 +19,9 @@ unit DX.HttpSys.Api;
 interface
 
 uses
-  System.SysUtils
-  {$IFDEF MSWINDOWS}
-  , Winapi.Windows
-  , DX.HttpSys.Api.Types
-  {$ENDIF};
+  System.SysUtils,
+  Winapi.Windows,
+  DX.HttpSys.Api.Types;
 
 type
   EDXHttpSysError = class(Exception)
@@ -33,17 +32,17 @@ type
     property ErrorCode: Cardinal read FErrorCode;
   end;
 
+  /// <summary>Raised when a requested HTTP.sys feature is unavailable on the
+  /// running Windows version (e.g. HTTP/2 on an older build).</summary>
   EDXHttpSysNotSupported = class(EDXHttpSysError);
-
-{$IFDEF MSWINDOWS}
 
   // ---------------------------------------------------------------------------
   // Function signatures
   // ---------------------------------------------------------------------------
 
   TFnHttpInitialize = function(
-    Version: THTTP_VERSION;
-    Flags:   ULONG;
+    Version:   THTTP_VERSION;
+    Flags:     ULONG;
     pReserved: Pointer): ULONG; stdcall;
 
   TFnHttpTerminate = function(
@@ -124,15 +123,22 @@ type
     pLogData:       Pointer): ULONG; stdcall;
 
   // ---------------------------------------------------------------------------
-  // Main structure: TDXHttpSysApi
+  // TDXHttpSysApi — runtime function table for httpapi.dll v2.0.
+  //
+  // This is a CLASS, not a record: an instance is always zero-initialised on
+  // Create, so the "already loaded" early-exit in Load and the function pointers
+  // are never seen as uninitialised garbage. See docs/DECISIONS.md (A-2).
   // ---------------------------------------------------------------------------
 
-  TDXHttpSysApi = record
+  TDXHttpSysApi = class
   private
     FLibHandle: THandle;
     FLoaded:    Boolean;
 
     function GetProc(const AName: string): Pointer;
+    // Nils all resolved function pointers so a post-Unload call fails fast
+    // (a deterministic nil-call) instead of jumping into unmapped code.
+    procedure ClearProcs;
   public
     // Lifecycle
     Initialize:               TFnHttpInitialize;
@@ -158,8 +164,14 @@ type
     ReceiveRequestEntityBody: TFnHttpReceiveRequestEntityBody;
     SendHttpResponse:         TFnHttpSendHttpResponse;
 
-    // Loads httpapi.dll and all function pointers.
-    // Returns False when the DLL cannot be found.
+    // Unloads the DLL (if still loaded) before the instance is freed.
+    destructor Destroy; override;
+
+    // Convenience: HttpInitialize with HTTPAPI_VERSION_2.
+    function  InitializeV2(AFlags: ULONG): ULONG;
+
+    // Loads httpapi.dll and resolves all function pointers.
+    // Returns False if the DLL cannot be loaded or a critical export is missing.
     function  Load: Boolean;
 
     // Unloads the DLL. Must be called after HttpTerminate.
@@ -175,8 +187,6 @@ type
     class function  ResultToString(AResult: ULONG): string; static;
   end;
 
-{$ENDIF MSWINDOWS}
-
 implementation
 
 // -----------------------------------------------------------------------------
@@ -186,29 +196,45 @@ implementation
 constructor EDXHttpSysError.CreateWin32(AErrorCode: Cardinal; const AContext: string);
 begin
   FErrorCode := AErrorCode;
-  {$IFDEF MSWINDOWS}
-  inherited CreateFmt('[DX.HttpSys] %s – Win32 Error %d: %s',
-    [AContext, AErrorCode, SysErrorMessage(AErrorCode)]);
-  {$ELSE}
-  inherited CreateFmt('[DX.HttpSys] %s – Error %d', [AContext, AErrorCode]);
-  {$ENDIF}
+  if AErrorCode = 0 then
+    inherited CreateFmt('[DX.HttpSys] %s', [AContext])
+  else
+    inherited CreateFmt('[DX.HttpSys] %s – Win32 Error %d: %s',
+      [AContext, AErrorCode, SysErrorMessage(AErrorCode)]);
 end;
-
-{$IFDEF MSWINDOWS}
 
 // -----------------------------------------------------------------------------
 // TDXHttpSysApi
 // -----------------------------------------------------------------------------
 
-function TDXHttpSysApi.GetProc(const AName: string): Pointer;
+destructor TDXHttpSysApi.Destroy;
 begin
-  Result := GetProcAddress(FLibHandle, PChar(AName));
+  Unload;
+  inherited;
+end;
+
+function TDXHttpSysApi.InitializeV2(AFlags: ULONG): ULONG;
+begin
+  // Fail deterministically if a caller forgot Load, instead of an AV on a nil
+  // function pointer.
+  if not FLoaded then
+    raise EDXHttpSysError.CreateWin32(0,
+      'TDXHttpSysApi.InitializeV2 called before a successful Load');
+  Result := Initialize(HTTPAPI_VERSION_2, AFlags, nil);
+end;
+
+function TDXHttpSysApi.GetProc(const AName: string): Pointer;
+var
+  LAnsiName: AnsiString;
+begin
+  // GetProcAddress takes an ANSI (LPCSTR) symbol name — there is no wide variant.
+  LAnsiName := AnsiString(AName);
+  Result := GetProcAddress(FLibHandle, PAnsiChar(LAnsiName));
   // Missing optional functions yield nil; critical ones are checked in Load.
 end;
 
 function TDXHttpSysApi.Load: Boolean;
 begin
-  Result := False;
   if FLoaded then
     Exit(True);
 
@@ -248,11 +274,30 @@ begin
   begin
     FreeLibrary(FLibHandle);
     FLibHandle := 0;
+    ClearProcs;
     Exit(False);
   end;
 
   FLoaded := True;
   Result  := True;
+end;
+
+procedure TDXHttpSysApi.ClearProcs;
+begin
+  @Initialize               := nil;
+  @Terminate                := nil;
+  @CreateServerSession      := nil;
+  @CloseServerSession       := nil;
+  @CreateUrlGroup           := nil;
+  @CloseUrlGroup            := nil;
+  @AddUrlToUrlGroup         := nil;
+  @RemoveUrlFromUrlGroup    := nil;
+  @CreateRequestQueue       := nil;
+  @CloseRequestQueue        := nil;
+  @SetUrlGroupProperty      := nil;
+  @ReceiveHttpRequest       := nil;
+  @ReceiveRequestEntityBody := nil;
+  @SendHttpResponse         := nil;
 end;
 
 procedure TDXHttpSysApi.Unload;
@@ -262,6 +307,7 @@ begin
     FreeLibrary(FLibHandle);
     FLibHandle := 0;
     FLoaded    := False;
+    ClearProcs;
   end;
 end;
 
@@ -275,7 +321,5 @@ class function TDXHttpSysApi.ResultToString(AResult: ULONG): string;
 begin
   Result := SysErrorMessage(AResult);
 end;
-
-{$ENDIF MSWINDOWS}
 
 end.
