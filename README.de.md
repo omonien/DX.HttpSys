@@ -36,6 +36,16 @@ HTTP.sys ist der Kernel-Mode-HTTP-Listener, der seit Windows XP SP2 / Server 200
 
 ---
 
+## Hintergrund — erprobt im Produktiveinsatz, nicht neu erfunden
+
+Das hier ist kein frisches Experiment. Eine HTTP.sys-Anbindung für Delphi setze ich bereits **seit über zehn Jahren in mehreren produktiven Anwendungen** ein. Sie läuft stabil und trägt seitdem reale Lasten.
+
+Diese ursprüngliche Bibliothek ist allerdings unter Zeitdruck gewachsen. Sie war eng an Indy angelehnt — im Kern eine HTTP.sys-WebBroker-Bridge, fest an ein einzelnes Framework gekoppelt — und enthält Designentscheidungen, die aus heutiger Sicht schwierig sind. Eine Open-Source-Veröffentlichung war immer angedacht, scheiterte aber an der Komplexität der HTTP.sys-API und am entsprechend suboptimalen Code.
+
+**DX.HttpSys ist der bewusste Neuansatz:** dieselbe erprobte Grundlage, neu gebaut als stark abstrahierter, framework-neutraler Kern, den beliebige Produkte (WiRL, WebBroker, Horse, …) als Server-Engine nutzen können. Keine neue Idee — über ein Jahrzehnt Produktionserfahrung, destilliert in eine saubere, wiederverwendbare Bibliothek.
+
+---
+
 ## Highlights
 
 - 🧩 **Framework-neutraler Kern** — direkt nutzbar oder in das Framework deiner Wahl eingebunden.

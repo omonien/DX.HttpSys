@@ -368,14 +368,25 @@ WebBroker verwendet einen anderen Dispatching-Mechanismus (WebModule, `DispatchA
 
 ## 8. Paketstruktur
 
+> Hinweis: Das Projekt folgt den globalen Delphi-Projektregeln (Kleinschreibung
+> `src/`, `demo/`, `tests/`, `build/`, `build-scripts/`, `libs/`). Package-Dateien
+> liegen in `src/`, der Build-Output ausschließlich unter `build/`.
+
 ```
 DX.HttpSys/
 ├── README.md                                 ← Projekt-Übersicht (EN)
 ├── README.de.md                              ← Projekt-Übersicht (DE)
 ├── LICENSE                                    ← MIT
+├── CLAUDE.md / delphi.md                      ← Agenten-/Coding-Regeln
+├── .gitattributes / .gitignore                ← Delphi-Standard (CRLF, Output-Ignores)
+├── DX.HttpSys.groupproj                       ← Projektgruppe (Packages + Tests)
 ├── docs/
-│   └── PRD.md                                ← dieses Dokument
-├── Source/
+│   ├── PRD.md                                ← dieses Dokument
+│   └── Delphi Style Guide EN.md
+├── src/
+│   ├── DX.HttpSys.Core.dpk / .dproj          ← Core-Package (kein Framework-Dep, RTL only)
+│   ├── DX.HttpSys.WiRL.dpk / .dproj          ← WiRL-Adapter-Package
+│   ├── DX.HttpSys.WebBroker.dpk / .dproj     ← WebBroker-Adapter-Package
 │   ├── Core/
 │   │   ├── DX.HttpSys.Api.Types.pas          ← HTTP_* Records, Enums, Constants
 │   │   ├── DX.HttpSys.Api.pas                ← httpapi.dll Wrapper (GetProcAddress)
@@ -386,17 +397,19 @@ DX.HttpSys/
 │   └── Adapters/
 │       ├── DX.HttpSys.WiRL.pas               ← WiRL-Adapter (IWiRLServer)
 │       └── DX.HttpSys.WebBroker.pas          ← WebBroker-Adapter
-├── Packages/
-│   ├── DX.HttpSys.Core.dproj                 ← Core-Package (kein Framework-Dep)
-│   ├── DX.HttpSys.WiRL.dproj                 ← WiRL-Adapter-Package
-│   └── DX.HttpSys.WebBroker.dproj            ← WebBroker-Adapter-Package
-└── Demos/
-    ├── 01.StandaloneServer/                  ← Layer 2 direkt, kein Framework
-    │   └── StandaloneDemo.dpr
-    ├── 02.WiRL/                              ← WiRL + DX.HttpSys
-    │   └── WiRLDemo.dpr
-    └── 03.WebBroker/                         ← WebBroker + DX.HttpSys
-        └── WebBrokerDemo.dpr
+├── tests/
+│   ├── DX.HttpSys.Tests.dpr / .dproj         ← DUnitX-Console-Runner
+│   └── Test.DX.HttpSys.Sample.pas            ← Platzhalter-Fixture (ersetzen)
+├── demo/                                       ← Demos (geplant)
+│   ├── 01.StandaloneServer/                  ← Layer 2 direkt, kein Framework
+│   ├── 02.WiRL/                              ← WiRL + DX.HttpSys
+│   └── 03.WebBroker/                         ← WebBroker + DX.HttpSys
+├── libs/
+│   └── DUnitX/                                ← Test-Framework (Git-Submodul)
+├── build-scripts/
+│   └── DelphiBuildDPROJ.ps1
+└── build/                                      ← Build-Output (git-ignoriert)
+    └── $(Platform)/$(Config)/[dcu]
 ```
 
 ---

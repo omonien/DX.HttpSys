@@ -1,0 +1,51 @@
+﻿/// <summary>
+///   DX.HttpSys.Core — Framework-agnostic kernel-mode HTTP.sys server engine (RTL only).
+/// </summary>
+/// <remarks>
+///   No GUI or framework dependencies; usable from Console, Service, VCL and FMX.
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-19</created>
+/// <license>MIT</license>
+package DX.HttpSys.Core;
+
+{$R *.res}
+{$IFDEF IMPLICITBUILDING This IFDEF should not be used by users}
+{$ALIGN 8}
+{$ASSERTIONS ON}
+{$BOOLEVAL OFF}
+{$DEBUGINFO OFF}
+{$EXTENDEDSYNTAX ON}
+{$IMPORTEDDATA ON}
+{$IOCHECKS ON}
+{$LOCALSYMBOLS ON}
+{$LONGSTRINGS ON}
+{$OPENSTRINGS ON}
+{$OPTIMIZATION OFF}
+{$OVERFLOWCHECKS OFF}
+{$RANGECHECKS OFF}
+{$REFERENCEINFO ON}
+{$SAFEDIVIDE OFF}
+{$STACKFRAMES ON}
+{$TYPEDADDRESS OFF}
+{$VARSTRINGCHECKS ON}
+{$WRITEABLECONST OFF}
+{$MINENUMSIZE 1}
+{$IMAGEBASE $400000}
+{$DEFINE DEBUG}
+{$ENDIF IMPLICITBUILDING}
+{$RUNONLY}
+{$IMPLICITBUILD ON}
+
+requires
+  rtl;
+
+contains
+  DX.HttpSys.Api.Types in 'Core\DX.HttpSys.Api.Types.pas',
+  DX.HttpSys.Api in 'Core\DX.HttpSys.Api.pas',
+  DX.HttpSys.Request in 'Core\DX.HttpSys.Request.pas',
+  DX.HttpSys.Response in 'Core\DX.HttpSys.Response.pas',
+  DX.HttpSys.ThreadPool in 'Core\DX.HttpSys.ThreadPool.pas',
+  DX.HttpSys.Server in 'Core\DX.HttpSys.Server.pas';
+
+end.

@@ -1,18 +1,20 @@
-// =============================================================================
-// DX.HttpSys.Request.pas
-// Abstraktion eines eingehenden HTTP.sys-Requests
-//
-// TDXHttpSysRequest kapselt einen PHTTP_REQUEST und stellt typsichere,
-// Delphi-freundliche Properties bereit.
-//
-// WICHTIG:
-//   - Immer CookedUrl verwenden, niemals pRawUrl (nur für Logging/Statistik)
-//   - Body wird lazy via HttpReceiveRequestEntityBody geladen
-//   - Instanzen sind NICHT thread-safe; nur im zugehörigen Worker-Thread nutzen
-//
-// (c) Developer Experts LLC – MIT License
-// =============================================================================
-
+﻿/// <summary>
+///   DX.HttpSys.Request — abstraction of an incoming HTTP.sys request.
+/// </summary>
+/// <remarks>
+///   TDXHttpSysRequest wraps a PHTTP_REQUEST and exposes type-safe,
+///   Delphi-friendly properties.
+///
+///   Important:
+///     - Always use CookedUrl, never pRawUrl (the latter is only for
+///       logging/statistics).
+///     - The body is loaded lazily via HttpReceiveRequestEntityBody.
+///     - Instances are NOT thread-safe; use them only within their owning
+///       worker thread.
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-19</created>
+/// <license>MIT</license>
 unit DX.HttpSys.Request;
 
 {$IFDEF MSWINDOWS}
@@ -30,7 +32,7 @@ uses
 
 type
   // ---------------------------------------------------------------------------
-  // TDXHttpHeaders – einfache Name/Value-Liste für Request- und Response-Header
+  // TDXHttpHeaders – simple name/value list for request and response headers
   // ---------------------------------------------------------------------------
 
   TDXHttpHeaders = class
@@ -58,9 +60,9 @@ type
 
   TDXHttpSysRequest = class
   private
-    FApi:           TDXHttpSysApi;       // Referenz, kein Besitz
+    FApi:           TDXHttpSysApi;       // Reference, not owned
     FQueueHandle:   THandle;
-    FRawRequest:    PHTTP_REQUEST;       // Zeigt in den Recv-Puffer (kein Besitz)
+    FRawRequest:    PHTTP_REQUEST;       // Points into the recv buffer (not owned)
     FHeaders:       TDXHttpHeaders;
     FBody:          TStream;
     FBodyLoaded:    Boolean;
@@ -79,45 +81,45 @@ type
     function  LoadBody: TStream;
     function  SockAddrToIP(ASockAddr: PSOCKADDR): string;
   public
-    // Erzeugt eine Instanz aus einem rohen HTTP_REQUEST-Buffer.
-    // Der Puffer muss für die gesamte Lebensdauer der Instanz gültig bleiben.
+    // Creates an instance from a raw HTTP_REQUEST buffer.
+    // The buffer must remain valid for the entire lifetime of the instance.
     constructor Create(
       const AApi:         TDXHttpSysApi;
       AQueueHandle:       THandle;
       ARawRequest:        PHTTP_REQUEST);
     destructor  Destroy; override;
 
-    // HTTP-Verb (GET, POST, PUT, DELETE, ...)
+    // HTTP verb (GET, POST, PUT, DELETE, ...)
     property Method:        string          read FMethod;
 
-    // Vollständige URL aus CookedUrl.pFullUrl (z.B. "http://server:8080/api/test?x=1")
+    // Full URL from CookedUrl.pFullUrl (e.g. "http://server:8080/api/test?x=1")
     property Url:           string          read FUrl;
 
-    // Pfad aus CookedUrl.pAbsPath (z.B. "/api/test")
+    // Path from CookedUrl.pAbsPath (e.g. "/api/test")
     property Path:          string          read FPath;
 
-    // Query-String aus CookedUrl.pQueryString (z.B. "x=1", OHNE führendes '?')
+    // Query string from CookedUrl.pQueryString (e.g. "x=1", WITHOUT leading '?')
     property QueryString:   string          read FQueryString;
 
-    // Host aus CookedUrl.pHost (z.B. "server:8080")
+    // Host from CookedUrl.pHost (e.g. "server:8080")
     property Host:          string          read FHost;
 
-    // Alle Request-Header
+    // All request headers
     property Headers:       TDXHttpHeaders  read FHeaders;
 
-    // Body als Stream – wird beim ersten Zugriff lazy geladen
+    // Body as a stream – loaded lazily on first access
     property Body:          TStream         read LoadBody;
 
-    // Content-Length Header-Wert (-1 wenn nicht gesetzt)
+    // Content-Length header value (-1 if not set)
     property ContentLength: Int64           read FContentLength;
 
-    // Remote-IP des Clients als String (IPv4 oder IPv6)
+    // Remote IP of the client as a string (IPv4 or IPv6)
     property RemoteIP:      string          read FRemoteIP;
 
-    // Interner Request-Identifier – wird von TDXHttpSysResponse benötigt
+    // Internal request identifier – required by TDXHttpSysResponse
     property RequestId:     HTTP_REQUEST_ID read FRequestId;
 
-    // Routing-Kontext aus dem UrlGroup-Setup (0 wenn nicht gesetzt)
+    // Routing context from the UrlGroup setup (0 if not set)
     property UrlContext:    HTTP_URL_CONTEXT read FUrlContext;
   end;
 
@@ -206,7 +208,7 @@ begin
   FRequestId  := R^.RequestId;
   FUrlContext := R^.UrlContext;
 
-  // HTTP-Verb
+  // HTTP verb
   if R^.Verb in [Low(HTTP_VERB)..High(HTTP_VERB)] then
   begin
     if R^.Verb = HttpVerbUnknown then
@@ -217,7 +219,7 @@ begin
   else
     FMethod := '';
 
-  // URL-Teile – IMMER CookedUrl verwenden
+  // URL parts – ALWAYS use CookedUrl
   if R^.CookedUrl.pFullUrl <> nil then
     FUrl := string(R^.CookedUrl.pFullUrl);
   if R^.CookedUrl.pAbsPath <> nil then
@@ -225,7 +227,7 @@ begin
   if R^.CookedUrl.pQueryString <> nil then
   begin
     FQueryString := string(R^.CookedUrl.pQueryString);
-    // Führendes '?' entfernen
+    // Strip leading '?'
     if FQueryString.StartsWith('?') then
       FQueryString := FQueryString.Substring(1);
   end;
@@ -254,7 +256,7 @@ var
   I: Integer;
   UH: PHTTP_UNKNOWN_HEADER;
 begin
-  // Bekannte Header
+  // Known headers
   AddKnown(Ord(HttpHeaderCacheControl),       'cache-control');
   AddKnown(Ord(HttpHeaderConnection),         'connection');
   AddKnown(Ord(HttpHeaderContentLength),      'content-length');
@@ -267,13 +269,13 @@ begin
   AddKnown(Ord(HttpHeaderAuthorization),      'authorization');
   AddKnown(Ord(HttpHeaderCookie),             'cookie');
   AddKnown(Ord(HttpHeaderReferer),            'referer');
-  // ... weitere nach Bedarf ergänzen
+  // ... add more as needed
 
-  // Content-Length als Int64 parsen
+  // Parse Content-Length as Int64
   if FHeaders.HasHeader('content-length') then
     FContentLength := StrToInt64Def(FHeaders['content-length'], -1);
 
-  // Unbekannte Header
+  // Unknown headers
   if (FRawRequest^.Headers.UnknownHeaderCount > 0)
     and (FRawRequest^.Headers.pUnknownHeaders <> nil) then
   begin
@@ -294,7 +296,7 @@ end;
 
 function TDXHttpSysRequest.LoadBody: TStream;
 const
-  CHUNK_SIZE = 64 * 1024; // 64 KB pro Chunk
+  CHUNK_SIZE = 64 * 1024; // 64 KB per chunk
 var
   Buffer:       array of Byte;
   BytesRead:    ULONG;
@@ -356,7 +358,7 @@ begin
         Byte(SA4^.sin_addr.S_un_b.s_b3),
         Byte(SA4^.sin_addr.S_un_b.s_b4)]);
     AF_INET6:
-      Result := '[IPv6]'; // TODO: Vollständige IPv6-Formatierung
+      Result := '[IPv6]'; // TODO: full IPv6 formatting
   end;
 end;
 

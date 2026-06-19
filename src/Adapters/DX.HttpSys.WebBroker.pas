@@ -1,28 +1,27 @@
-// =============================================================================
-// DX.HttpSys.WebBroker.pas
-// WebBroker-Adapter für DX.HttpSys
-//
-// Implementiert IDXHttpSysRequestHandler und leitet Requests über den
-// Standard-WebBroker-Dispatcher (WebReq.DispatchAction) weiter.
-//
-// Erzeugt TDXHttpSysWebRequest / TDXHttpSysWebResponse als Subklassen
-// der abstrakten WebBroker-Basis-Klassen TWebRequest / TWebResponse.
-//
-// Verwendung:
-//
-//   var
-//     Server:     TDXHttpSysServer;
-//     Dispatcher: TWebBrokerHttpSysDispatcher;
-//
-//   Dispatcher := TWebBrokerHttpSysDispatcher.Create;
-//   Server     := TDXHttpSysServer.Create;
-//   Server.Handler := Dispatcher;
-//   Server.AddUrlPrefix('http://localhost:8080/');
-//   Server.Start;
-//
-// (c) Developer Experts LLC – MIT License
-// =============================================================================
-
+﻿/// <summary>
+///   DX.HttpSys.WebBroker — WebBroker adapter exposing DX.HttpSys requests through the standard WebBroker dispatcher.
+/// </summary>
+/// <remarks>
+///   Implements IDXHttpSysRequestHandler and forwards requests via the standard WebBroker dispatcher
+///   (WebReq.DispatchAction). It creates TDXHttpSysWebRequest / TDXHttpSysWebResponse as subclasses of the
+///   abstract WebBroker base classes TWebRequest / TWebResponse.
+///
+///   Usage:
+///   <code>
+///     var
+///       Server:     TDXHttpSysServer;
+///       Dispatcher: TWebBrokerHttpSysDispatcher;
+///
+///     Dispatcher := TWebBrokerHttpSysDispatcher.Create;
+///     Server     := TDXHttpSysServer.Create;
+///     Server.Handler := Dispatcher;
+///     Server.AddUrlPrefix('http://localhost:8080/');
+///     Server.Start;
+///   </code>
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-19</created>
+/// <license>MIT</license>
 unit DX.HttpSys.WebBroker;
 
 {$IFDEF MSWINDOWS}
@@ -45,14 +44,14 @@ uses
 type
   // ---------------------------------------------------------------------------
   // TDXHttpSysWebRequest
-  // Subklasse von TWebRequest – delegiert an TDXHttpSysRequest
+  // Subclass of TWebRequest – delegates to TDXHttpSysRequest
   // ---------------------------------------------------------------------------
 
   TDXHttpSysWebRequest = class(TWebRequest)
   private
-    FDXRequest: TDXHttpSysRequest;  // Referenz, kein Besitz
+    FDXRequest: TDXHttpSysRequest;  // Reference, not owned
   protected
-    // Abstrakte Getter aus TWebRequest implementieren
+    // Implement the abstract getters from TWebRequest
     function GetStringVariable(Index: Integer): string; override;
     function GetDateVariable(Index: Integer): TDateTime; override;
     function GetIntegerVariable(Index: Integer): Integer; override;
@@ -71,12 +70,12 @@ type
 
   // ---------------------------------------------------------------------------
   // TDXHttpSysWebResponse
-  // Subklasse von TWebResponse – delegiert an TDXHttpSysResponse
+  // Subclass of TWebResponse – delegates to TDXHttpSysResponse
   // ---------------------------------------------------------------------------
 
   TDXHttpSysWebResponse = class(TWebResponse)
   private
-    FDXResponse: TDXHttpSysResponse;  // Referenz, kein Besitz
+    FDXResponse: TDXHttpSysResponse;  // Reference, not owned
   protected
     function GetContent: string; override;
     procedure SetContent(const AValue: string); override;
@@ -99,7 +98,7 @@ type
 
   // ---------------------------------------------------------------------------
   // TWebBrokerHttpSysDispatcher
-  // Implementiert IDXHttpSysRequestHandler – verbindet DX.HttpSys mit WebBroker
+  // Implements IDXHttpSysRequestHandler – connects DX.HttpSys with WebBroker
   // ---------------------------------------------------------------------------
 
   TWebBrokerHttpSysDispatcher = class(TInterfacedObject, IDXHttpSysRequestHandler)
@@ -124,8 +123,8 @@ end;
 
 function TDXHttpSysWebRequest.GetStringVariable(Index: Integer): string;
 begin
-  // Index-Mapping nach TWebRequest-Konvention (siehe Web.HTTPApp.pas)
-  // Vollständige Implementierung in Milestone 5
+  // Index mapping per TWebRequest convention (see Web.HTTPApp.pas)
+  // Full implementation in Milestone 5
   case Index of
     0:  Result := FDXRequest.Method;
     1:  Result := FDXRequest.Url;
@@ -145,7 +144,7 @@ end;
 
 function TDXHttpSysWebRequest.GetDateVariable(Index: Integer): TDateTime;
 begin
-  // TODO: Header-Datum-Parsing (If-Modified-Since etc.)
+  // TODO: header date parsing (If-Modified-Since etc.)
   Result := 0;
 end;
 
@@ -197,12 +196,12 @@ end;
 
 function TDXHttpSysWebRequest.TranslateURI(const URI: string): string;
 begin
-  Result := URI; // Keine Übersetzung notwendig
+  Result := URI; // No translation required
 end;
 
 function TDXHttpSysWebRequest.WriteClient(var Buffer; Count: Integer): Integer;
 begin
-  Result := 0; // Nicht über Request schreiben
+  Result := 0; // Do not write via the request
 end;
 
 function TDXHttpSysWebRequest.WriteString(const AString: string): Boolean;
@@ -258,7 +257,7 @@ end;
 
 procedure TDXHttpSysWebResponse.SetLogMessage(const AValue: string);
 begin
-  // Logging-Hook – TODO
+  // Logging hook – TODO
 end;
 
 function TDXHttpSysWebResponse.GetReasonString: string;
@@ -310,7 +309,7 @@ begin
     WebReq  := TDXHttpSysWebRequest.Create(ARequest);
     WebResp := TDXHttpSysWebResponse.Create(WebReq, AResponse);
 
-    // Standard-WebBroker-Dispatch
+    // Standard WebBroker dispatch
     if not WebReq.DispatchRequest(WebResp) then
       AResponse.SendError(404, 'Not Found');
   finally

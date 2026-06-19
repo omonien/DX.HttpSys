@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{AA4C1C4F-80A2-42FA-9249-605CCE435C8B}</ProjectGuid>
+  </PropertyGroup>
+  <ItemGroup>
+    <Projects Include="src\DX.HttpSys.Core.dproj">
+      <Dependencies/>
+    </Projects>
+    <Projects Include="src\DX.HttpSys.WiRL.dproj">
+      <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
+    </Projects>
+    <Projects Include="src\DX.HttpSys.WebBroker.dproj">
+      <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
+    </Projects>
+    <Projects Include="tests\DX.HttpSys.Tests.dproj">
+      <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
+    </Projects>
+  </ItemGroup>
+  <ProjectExtensions>
+    <Borland.Personality>Default.Personality.12</Borland.Personality>
+  </ProjectExtensions>
+  <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

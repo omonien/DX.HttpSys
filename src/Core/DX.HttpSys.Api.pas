@@ -1,18 +1,18 @@
-// =============================================================================
-// DX.HttpSys.Api.pas
-// httpapi.dll v2.0 – Laufzeit-Loader und Funktions-Record
-//
-// Alle Funktionen werden via GetProcAddress geladen, kein harter Import-Link.
-// Die Unit ist auf Nicht-Windows-Plattformen compilierbar; die Funktionspointer
-// sind dann nil. EDXHttpSysNotSupported wird bei Load auf Nicht-Windows geworfen.
-//
-// Verwendung:
-//   if not TDXHttpSysApi.Instance.Load then
-//     raise EDXHttpSysError.Create('httpapi.dll konnte nicht geladen werden');
-//
-// (c) Developer Experts LLC – MIT License
-// =============================================================================
-
+﻿/// <summary>
+///   DX.HttpSys.Api — runtime loader and function record for httpapi.dll v2.0.
+/// </summary>
+/// <remarks>
+///   All functions are resolved via GetProcAddress; there is no hard import link.
+///   The unit compiles on non-Windows platforms, where the function pointers are
+///   nil. EDXHttpSysNotSupported is raised on Load when running on non-Windows.
+///
+///   Usage:
+///     if not TDXHttpSysApi.Instance.Load then
+///       raise EDXHttpSysError.Create('httpapi.dll could not be loaded');
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-19</created>
+/// <license>MIT</license>
 unit DX.HttpSys.Api;
 
 interface
@@ -38,7 +38,7 @@ type
 {$IFDEF MSWINDOWS}
 
   // ---------------------------------------------------------------------------
-  // Funktions-Signaturen
+  // Function signatures
   // ---------------------------------------------------------------------------
 
   TFnHttpInitialize = function(
@@ -124,7 +124,7 @@ type
     pLogData:       Pointer): ULONG; stdcall;
 
   // ---------------------------------------------------------------------------
-  // Hauptstruktur: TDXHttpSysApi
+  // Main structure: TDXHttpSysApi
   // ---------------------------------------------------------------------------
 
   TDXHttpSysApi = record
@@ -158,20 +158,20 @@ type
     ReceiveRequestEntityBody: TFnHttpReceiveRequestEntityBody;
     SendHttpResponse:         TFnHttpSendHttpResponse;
 
-    // Lädt httpapi.dll und alle Funktionspointer.
-    // Gibt False zurück wenn die DLL nicht gefunden wird.
+    // Loads httpapi.dll and all function pointers.
+    // Returns False when the DLL cannot be found.
     function  Load: Boolean;
 
-    // Entlädt die DLL. Muss nach HttpTerminate aufgerufen werden.
+    // Unloads the DLL. Must be called after HttpTerminate.
     procedure Unload;
 
     property Loaded: Boolean read FLoaded;
 
-    // Wirft EDXHttpSysError bei AResult <> ERROR_SUCCESS.
-    // AContext wird in die Exception-Message eingebettet.
+    // Raises EDXHttpSysError when AResult <> ERROR_SUCCESS.
+    // AContext is embedded into the exception message.
     class procedure CheckResult(AResult: ULONG; const AContext: string); static;
 
-    // Gibt den Win32-Fehlertext für einen Result-Code zurück.
+    // Returns the Win32 error text for a result code.
     class function  ResultToString(AResult: ULONG): string; static;
   end;
 
@@ -203,7 +203,7 @@ end;
 function TDXHttpSysApi.GetProc(const AName: string): Pointer;
 begin
   Result := GetProcAddress(FLibHandle, PChar(AName));
-  // Fehlende optionale Funktionen ergeben nil; kritische werden in Load geprüft.
+  // Missing optional functions yield nil; critical ones are checked in Load.
 end;
 
 function TDXHttpSysApi.Load: Boolean;
@@ -220,7 +220,7 @@ begin
   @Initialize               := GetProc('HttpInitialize');
   @Terminate                := GetProc('HttpTerminate');
 
-  // V2 Session / UrlGroup
+  // V2 session / URL group
   @CreateServerSession      := GetProc('HttpCreateServerSession');
   @CloseServerSession       := GetProc('HttpCloseServerSession');
   @CreateUrlGroup           := GetProc('HttpCreateUrlGroup');
@@ -238,7 +238,7 @@ begin
   @ReceiveRequestEntityBody := GetProc('HttpReceiveRequestEntityBody');
   @SendHttpResponse         := GetProc('HttpSendHttpResponse');
 
-  // Kritische Funktionen prüfen
+  // Check critical functions
   if not Assigned(Initialize)
     or not Assigned(CreateServerSession)
     or not Assigned(CreateUrlGroup)

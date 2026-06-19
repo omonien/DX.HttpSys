@@ -1,18 +1,18 @@
-// =============================================================================
-// DX.HttpSys.Response.pas
-// Abstraktion eines ausgehenden HTTP.sys-Response
-//
-// TDXHttpSysResponse kapselt HttpSendHttpResponse und stellt eine
-// Delphi-freundliche API bereit.
-//
-// WICHTIG:
-//   - Send() darf nur einmal aufgerufen werden
-//   - Nach Send() sind keine Property-Änderungen mehr möglich
-//   - Instanzen sind NICHT thread-safe; nur im zugehörigen Worker-Thread nutzen
-//
-// (c) Developer Experts LLC – MIT License
-// =============================================================================
-
+﻿/// <summary>
+///   DX.HttpSys.Response — abstraction of an outgoing HTTP.sys response.
+/// </summary>
+/// <remarks>
+///   TDXHttpSysResponse wraps HttpSendHttpResponse and provides a
+///   Delphi-friendly API.
+///
+///   Important:
+///     - Send() may only be called once.
+///     - After Send(), no further property changes are possible.
+///     - Instances are NOT thread-safe; use them only on the owning worker thread.
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-19</created>
+/// <license>MIT</license>
 unit DX.HttpSys.Response;
 
 {$IFDEF MSWINDOWS}
@@ -34,7 +34,7 @@ type
 
   TDXHttpSysResponse = class
   private
-    FApi:          TDXHttpSysApi;    // Referenz, kein Besitz
+    FApi:          TDXHttpSysApi;    // Reference, not owned
     FQueueHandle:  THandle;
     FRequestId:    HTTP_REQUEST_ID;
     FStatusCode:   Word;
@@ -58,43 +58,43 @@ type
       ARequestId:        HTTP_REQUEST_ID);
     destructor  Destroy; override;
 
-    // HTTP-Statuscode (Default: 200)
+    // HTTP status code (default: 200)
     property StatusCode:    Word   read FStatusCode  write SetStatusCode;
 
-    // Reason-Phrase (Default: wird aus StatusCode abgeleitet)
+    // Reason phrase (default: derived from StatusCode)
     property ReasonPhrase:  string
       read (string(FReasonPhrase))
       write SetReasonPhrase;
 
-    // Response-Header
+    // Response headers
     property Headers:       TDXHttpHeaders read FHeaders;
 
-    // Body-Stream – direkt befüllbar
+    // Body stream – can be filled directly
     property Body:          TMemoryStream  read FBody;
 
-    // Convenience: Body aus String setzen + Content-Type-Header
+    // Convenience: set body from string + Content-Type header
     procedure SetBody(
       const AText:        string;
       const AContentType: string = 'text/plain; charset=utf-8');
 
-    // Convenience: Body aus JSON-String setzen
+    // Convenience: set body from JSON string
     procedure SetJsonBody(const AJson: string);
 
-    // Sendet den Response über HttpSendHttpResponse.
-    // Darf nur einmal aufgerufen werden; danach ist Sent = True.
+    // Sends the response via HttpSendHttpResponse.
+    // May only be called once; afterwards Sent = True.
     procedure Send;
 
-    // Sendet einen einfachen Fehler-Response (kein Body erforderlich)
+    // Sends a simple error response (no body required)
     procedure SendError(AStatusCode: Word; const AReason: string = '');
 
-    // True nach erfolgreichem Send()
+    // True after a successful Send()
     property Sent: Boolean read FSent;
   end;
 
 implementation
 
 // -----------------------------------------------------------------------------
-// Standard-Reason-Phrases nach RFC 9110
+// Standard reason phrases per RFC 9110
 // -----------------------------------------------------------------------------
 
 function DefaultReasonPhrase(AStatusCode: Word): AnsiString;
@@ -174,7 +174,7 @@ end;
 procedure TDXHttpSysResponse.CheckNotSent;
 begin
   if FSent then
-    raise EDXHttpSysError.CreateWin32(0, 'Response wurde bereits gesendet (Send darf nur einmal aufgerufen werden)');
+    raise EDXHttpSysError.CreateWin32(0, 'Response has already been sent (Send may only be called once)');
 end;
 
 procedure TDXHttpSysResponse.SetBody(const AText, AContentType: string);
@@ -205,11 +205,11 @@ begin
   ARawResp.ReasonLength := Length(FReasonPhrase);
   ARawResp.Version      := HTTPAPI_VERSION_2;
 
-  // TODO: Known Response Headers befüllen
+  // TODO: populate known response headers
   // (HttpHeaderContentType, HttpHeaderServer, etc.)
-  // Milestone 2: vollständige Header-Übertragung implementieren
+  // Milestone 2: implement full header transmission
 
-  // Body-Chunk
+  // Body chunk
   if (ABodyData <> nil) and (ABodyLength > 0) then
   begin
     FillChar(AChunk, SizeOf(AChunk), 0);
@@ -235,14 +235,14 @@ begin
   CheckNotSent;
   FSent := True;
 
-  // Body-Daten vorbereiten
+  // Prepare body data
   BodyLength := FBody.Size;
   if BodyLength > 0 then
   begin
     FBody.Position := 0;
     BodyData := FBody.Memory;
 
-    // Content-Length setzen falls nicht explizit gesetzt
+    // Set Content-Length if not explicitly provided
     if not FHeaders.HasHeader('content-length') then
       FHeaders['content-length'] := IntToStr(BodyLength);
   end

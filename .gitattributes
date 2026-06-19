@@ -1,0 +1,80 @@
+# Delphi / RAD Studio .gitattributes
+# Based on: https://github.com/omonien/DelphiStandards
+# Enforces CRLF for all Delphi source files (required by the Delphi compiler on Windows)
+
+# ============================================================
+# Default behavior: normalize all text files
+# ============================================================
+* text=auto
+
+# ============================================================
+# Delphi source files — MUST be CRLF
+# ============================================================
+*.pas      text eol=crlf
+*.dpr      text eol=crlf
+*.dpk      text eol=crlf
+*.dfm      text eol=crlf
+*.fmx      text eol=crlf
+*.dproj    text eol=crlf
+*.groupproj text eol=crlf
+*.cbproj   text eol=crlf
+*.rc       text eol=crlf
+
+# ============================================================
+# Script and config files — LF (cross-platform)
+# ============================================================
+*.sh       text eol=lf
+*.py       text eol=lf
+Makefile   text eol=lf
+*.md       text eol=lf
+*.txt      text eol=lf
+*.json     text eol=lf
+*.yaml     text eol=lf
+*.yml      text eol=lf
+*.xml      text eol=lf
+*.html     text eol=lf
+*.css      text eol=lf
+*.js       text eol=lf
+
+# PowerShell scripts — CRLF (Windows tools)
+*.ps1      text eol=crlf
+*.psm1     text eol=crlf
+*.psd1     text eol=crlf
+
+# ============================================================
+# Binary files — never normalize
+# ============================================================
+*.exe      binary
+*.dll      binary
+*.bpl      binary
+*.dcu      binary
+*.dcp      binary
+*.dpl      binary
+*.res      binary
+*.ico      binary
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.bmp      binary
+*.cur      binary
+*.ani      binary
+*.wav      binary
+*.mp3      binary
+*.ogg      binary
+*.pdf      binary
+*.zip      binary
+*.7z       binary
+*.tar      binary
+*.gz       binary
+*.rar      binary
+*.msi      binary
+*.cab      binary
+*.lib      binary
+*.obj      binary
+*.pdb      binary
+*.map      binary
+*.xls      binary
+*.xlsx     binary
+*.doc      binary
+*.docx     binary

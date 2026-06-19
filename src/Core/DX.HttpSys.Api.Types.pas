@@ -1,17 +1,17 @@
-// =============================================================================
-// DX.HttpSys.Api.Types.pas
-// Windows HTTP Server API v2.0 – Pascal-Typdefinitionen
-//
-// Enthält alle HTTP_* Records, Enums und Constants, die für httpapi.dll v2.0
-// benötigt werden. Keine Logik, keine Abhängigkeiten außer Windows.
-//
-// Quellen:
-//   - Windows SDK: http_def.h, http.h
-//   - MSDN: HTTP Server API Version 2.0
-//
-// (c) Developer Experts LLC – MIT License
-// =============================================================================
-
+﻿/// <summary>
+///   DX.HttpSys.Api.Types — Pascal type definitions for the Windows HTTP Server API v2.0.
+/// </summary>
+/// <remarks>
+///   Contains all HTTP_* records, enums and constants required for httpapi.dll v2.0.
+///   No logic, no dependencies other than Windows.
+///
+///   Sources:
+///     - Windows SDK: http_def.h, http.h
+///     - MSDN: HTTP Server API Version 2.0
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-19</created>
+/// <license>MIT</license>
 unit DX.HttpSys.Api.Types;
 
 {$IFDEF MSWINDOWS}
@@ -50,7 +50,7 @@ const
   HTTP_SEND_RESPONSE_FLAG_RAW_HEADER   = $00000004;
 
 // -----------------------------------------------------------------------------
-// Handle-Typen
+// Handle types
 // -----------------------------------------------------------------------------
 
 type
@@ -68,7 +68,7 @@ type
   HTTP_OPAQUE_ID = UInt64;
 
 // -----------------------------------------------------------------------------
-// HTTP_SERVER_PROPERTY – Property-Enums für SetUrlGroupProperty etc.
+// HTTP_SERVER_PROPERTY – property enums for SetUrlGroupProperty etc.
 // -----------------------------------------------------------------------------
 
 type
@@ -86,7 +86,7 @@ type
     HttpServerDelegationProperty             = 10
   );
 
-// Wird mit HttpServerQueueLengthProperty verwendet
+// Used with HttpServerQueueLengthProperty
 type
   HTTP_BINDING_INFO = record
     Flags:                  ULONG;
@@ -95,7 +95,7 @@ type
   PHTTP_BINDING_INFO = ^HTTP_BINDING_INFO;
 
 // -----------------------------------------------------------------------------
-// HTTP_VERB – bekannte HTTP-Verben als Enum
+// HTTP_VERB – known HTTP verbs as an enum
 // -----------------------------------------------------------------------------
 
 type
@@ -131,7 +131,7 @@ const
   );
 
 // -----------------------------------------------------------------------------
-// HTTP_HEADER_ID – bekannte Request-/Response-Header als Enum
+// HTTP_HEADER_ID – known request/response headers as an enum
 // -----------------------------------------------------------------------------
 
 type
@@ -221,9 +221,9 @@ const
   HTTP_MAX_SERVER_QUEUE_LENGTH = $7FFFFFFF;
 
 type
-  // 41 Known Request Headers (HttpHeaderRequestMaximum = 41)
+  // 41 known request headers (HttpHeaderRequestMaximum = 41)
   THTTPKnownRequestHeaders = array[0..40] of HTTP_KNOWN_HEADER;
-  // 30 Known Response Headers (HttpHeaderResponseMaximum = 30)
+  // 30 known response headers (HttpHeaderResponseMaximum = 30)
   THTTPKnownResponseHeaders = array[0..29] of HTTP_KNOWN_HEADER;
 
   HTTP_REQUEST_HEADERS = record
@@ -245,24 +245,24 @@ type
   PHTTP_RESPONSE_HEADERS = ^HTTP_RESPONSE_HEADERS;
 
 // -----------------------------------------------------------------------------
-// HTTP_COOKED_URL – voreparste URL (immer bevorzugen gegenüber RawUrl)
+// HTTP_COOKED_URL – pre-parsed URL (always prefer over RawUrl)
 // -----------------------------------------------------------------------------
 
 type
   HTTP_COOKED_URL = record
-    FullUrlLength:    USHORT;    // Bytes (nicht Zeichen)
+    FullUrlLength:    USHORT;    // bytes (not characters)
     HostLength:       USHORT;
     AbsPathLength:    USHORT;
     QueryStringLength:USHORT;
-    pFullUrl:         PWideChar; // z.B. L"http://server:80/path?query"
+    pFullUrl:         PWideChar; // e.g. L"http://server:80/path?query"
     pHost:            PWideChar;
     pAbsPath:         PWideChar;
-    pQueryString:     PWideChar; // inkl. führendem '?', oder nil
+    pQueryString:     PWideChar; // including leading '?', or nil
   end;
   PHTTP_COOKED_URL = ^HTTP_COOKED_URL;
 
 // -----------------------------------------------------------------------------
-// HTTP_TRANSPORT_ADDRESS – Remote-Adresse des Clients
+// HTTP_TRANSPORT_ADDRESS – remote address of the client
 // -----------------------------------------------------------------------------
 
 type
@@ -273,7 +273,7 @@ type
   PHTTP_TRANSPORT_ADDRESS = ^HTTP_TRANSPORT_ADDRESS;
 
 // -----------------------------------------------------------------------------
-// HTTP_DATA_CHUNK – Body-Payload (Inline, FileHandle, etc.)
+// HTTP_DATA_CHUNK – body payload (inline, FileHandle, etc.)
 // -----------------------------------------------------------------------------
 
 type
@@ -307,7 +307,7 @@ type
   PHTTP_DATA_CHUNK = ^HTTP_DATA_CHUNK;
 
 // -----------------------------------------------------------------------------
-// HTTP_REQUEST_V2 (vereinfacht; flags, ssl-info etc. als reserved)
+// HTTP_REQUEST_V2 (simplified; flags, ssl-info etc. treated as reserved)
 // -----------------------------------------------------------------------------
 
 type
@@ -321,7 +321,7 @@ type
     UnknownVerbLength:  USHORT;
     RawUrlLength:       USHORT;
     pUnknownVerb:       PAnsiChar;
-    pRawUrl:            PAnsiChar;   // NICHT für Routing verwenden – nur Logging!
+    pRawUrl:            PAnsiChar;   // do NOT use for routing – logging only!
     CookedUrl:          HTTP_COOKED_URL;
     Address:            HTTP_TRANSPORT_ADDRESS;
     Headers:            HTTP_REQUEST_HEADERS;
@@ -329,11 +329,11 @@ type
     EntityChunkCount:   USHORT;
     pEntityChunks:      PHTTP_DATA_CHUNK;
     RawConnectionId:    HTTP_OPAQUE_ID;
-    // SSL-Info, Request-Info etc. folgen in V2 – hier als Padding behandelt
+    // SSL info, request info etc. follow in V2 – treated as padding here
   end;
   PHTTP_REQUEST_V1 = ^HTTP_REQUEST_V1;
 
-  // In der Praxis immer als V1 lesen; V2-Felder via Pointer-Arithmetik
+  // In practice always read as V1; V2 fields via pointer arithmetic
   HTTP_REQUEST  = HTTP_REQUEST_V1;
   PHTTP_REQUEST = ^HTTP_REQUEST;
 

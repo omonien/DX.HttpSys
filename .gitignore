@@ -57,11 +57,17 @@ __astcache/
 # Modeling support / package output
 modules/
 
+# Build artifact tree (output lives exclusively under /build)
+/build/
+
 # ─────────────────────────────────────────────────────────────
-# Editors / OS
+# Editors / OS / Tooling
 # ─────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 .vscode/
 *.swp
 *~
+
+# Claude Code local settings
+.claude/

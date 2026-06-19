@@ -1,23 +1,28 @@
-// =============================================================================
-// DX.HttpSys.Server.pas
-// TDXHttpSysServer – die öffentliche API des DX.HttpSys-Core-Layer
-//
-// Verwendungsbeispiel (direkter Einsatz ohne Framework):
-//
-//   var
-//     Server: TDXHttpSysServer;
-//
-//   Server := TDXHttpSysServer.Create;
-//   Server.Port := 8080;
-//   Server.Handler := TMyHandler.Create; // implementiert IDXHttpSysRequestHandler
-//   Server.AddUrlPrefix('http://localhost:8080/');
-//   Server.Start;
-//   // ...
-//   Server.Stop;
-//   Server.Free;
-//
-// (c) Developer Experts LLC – MIT License
-// =============================================================================
+﻿/// <summary>
+///   DX.HttpSys.Server — public API of the DX.HttpSys core layer, wrapping the
+///   Windows HTTP Server API (HTTP.sys) behind the <c>TDXHttpSysServer</c> class.
+/// </summary>
+/// <remarks>
+///   The server owns the HTTP.sys session, URL group, request queue and worker
+///   pool, and dispatches incoming requests to an <c>IDXHttpSysRequestHandler</c>.
+///   Usage example (direct use without a framework):
+///   <code>
+///   var
+///     Server: TDXHttpSysServer;
+///
+///   Server := TDXHttpSysServer.Create;
+///   Server.Port := 8080;
+///   Server.Handler := TMyHandler.Create; // implements IDXHttpSysRequestHandler
+///   Server.AddUrlPrefix('http://localhost:8080/');
+///   Server.Start;
+///   // ...
+///   Server.Stop;
+///   Server.Free;
+///   </code>
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-19</created>
+/// <license>MIT</license>
 
 unit DX.HttpSys.Server;
 
@@ -72,46 +77,46 @@ type
     constructor Create;
     destructor  Destroy; override;
 
-    // --- Konfiguration (vor Start setzen) ---
+    // --- Configuration (set before Start) ---
 
-    // Listening-Port (Default: 8080)
-    // Wird nur für automatische Prefix-Generierung verwendet wenn
-    // AddUrlPrefix nicht explizit aufgerufen wird.
+    // Listening port (default: 8080)
+    // Only used for automatic prefix generation when
+    // AddUrlPrefix is not called explicitly.
     property Port:         Word     read FPort         write FPort;
 
-    // Länge der Kernel-Request-Queue (Default: 1000)
+    // Length of the kernel request queue (default: 1000)
     property QueueLength:  Cardinal read FQueueLength   write FQueueLength;
 
-    // Anzahl Worker-Threads (Default: System.CPUCount * 2)
+    // Number of worker threads (default: System.CPUCount * 2)
     property ThreadCount:  Integer  read FThreadCount   write FThreadCount;
 
-    // Server-Header-Wert (Default: 'DX.HttpSys/1.0')
-    // HTTP.sys hängt automatisch ' Microsoft-HTTPAPI/2.0' an
+    // Server header value (default: 'DX.HttpSys/1.0')
+    // HTTP.sys automatically appends ' Microsoft-HTTPAPI/2.0'
     property ServerHeader: string   read FServerHeader  write FServerHeader;
 
-    // Das Handler-Interface – muss vor Start gesetzt sein
+    // The handler interface – must be set before Start
     property Handler:      IDXHttpSysRequestHandler
                                     read FHandler       write FHandler;
 
-    // Optionaler Error-Callback für Logging
+    // Optional error callback for logging
     property OnError:      TOnHttpSysError
                                     read FOnError       write FOnError;
 
-    // --- URL-Management ---
+    // --- URL management ---
 
-    // Fügt einen URL-Prefix hinzu.
-    // Beispiele:
-    //   'http://+:8080/'         – alle Interfaces (erfordert Admin/urlacl)
-    //   'http://localhost:8080/' – nur loopback (keine erhöhten Rechte)
-    //   'https://+:443/myapi/'   – TLS (Zertifikat via netsh vorab binden)
+    // Adds a URL prefix.
+    // Examples:
+    //   'http://+:8080/'         – all interfaces (requires admin/urlacl)
+    //   'http://localhost:8080/' – loopback only (no elevated rights)
+    //   'https://+:443/myapi/'   – TLS (bind certificate via netsh beforehand)
     procedure AddUrlPrefix(const APrefix: string; AContext: HTTP_URL_CONTEXT = 0);
     procedure RemoveUrlPrefix(const APrefix: string);
     procedure ClearUrlPrefixes;
 
-    // Convenience: Fügt 'http://localhost:<Port>/' hinzu
+    // Convenience: adds 'http://localhost:<Port>/'
     procedure UseLocalhost;
 
-    // Convenience: Fügt 'http://+:<Port>/' hinzu (erfordert erhöhte Rechte)
+    // Convenience: adds 'http://+:<Port>/' (requires elevated rights)
     procedure UseAllInterfaces;
 
     // --- Lifecycle ---
@@ -121,7 +126,7 @@ type
 
     property Active: Boolean read FActive;
 
-    // Direktzugriff auf den internen TDXHttpSysApi-Record (für Power-User)
+    // Direct access to the internal TDXHttpSysApi record (for power users)
     function GetServerImplementation: TObject;
   end;
 
@@ -158,17 +163,17 @@ procedure TDXHttpSysServer.CheckNotActive(const AProperty: string);
 begin
   if FActive then
     raise EDXHttpSysError.CreateWin32(0,
-      Format('Eigenschaft "%s" kann nur vor Start geändert werden', [AProperty]));
+      Format('Property "%s" can only be changed before Start', [AProperty]));
 end;
 
 procedure TDXHttpSysServer.CheckActive(const AOperation: string);
 begin
   if not FActive then
     raise EDXHttpSysError.CreateWin32(0,
-      Format('Operation "%s" erfordert einen aktiven Server', [AOperation]));
+      Format('Operation "%s" requires an active server', [AOperation]));
 end;
 
-// --- URL-Management ---
+// --- URL management ---
 
 procedure TDXHttpSysServer.AddUrlPrefix(
   const APrefix: string;
@@ -180,7 +185,7 @@ begin
   Item.Context := AContext;
   FUrlPrefixes.Add(Item);
 
-  // Wenn der Server bereits aktiv ist: sofort registrieren
+  // If the server is already active: register immediately
   if FActive and (FUrlGroupId <> 0) then
     TDXHttpSysApi.CheckResult(
       FApi.AddUrlToUrlGroup(FUrlGroupId, PWideChar(APrefix), AContext, 0),
@@ -221,30 +226,30 @@ var
   BindingInfo: HTTP_BINDING_INFO;
   Item:        TDXUrlPrefix;
 begin
-  // Server Session
+  // Server session
   TDXHttpSysApi.CheckResult(
     FApi.CreateServerSession(HTTPAPI_VERSION_2, FSessionId, 0),
     'CreateServerSession');
 
-  // URL Group
+  // URL group
   TDXHttpSysApi.CheckResult(
     FApi.CreateUrlGroup(FSessionId, FUrlGroupId, 0),
     'CreateUrlGroup');
 
-  // Request Queue
+  // Request queue
   TDXHttpSysApi.CheckResult(
     FApi.CreateRequestQueue(
       HTTPAPI_VERSION_2,
-      nil,     // kein benannter Queue
-      nil,     // default Security
+      nil,     // no named queue
+      nil,     // default security
       0,
       FReqQueueHandle),
     'CreateRequestQueue');
 
-  // Queue-Länge setzen
+  // Set queue length
   SetQueueLength(FQueueLength);
 
-  // URL Group an Request Queue binden
+  // Bind URL group to request queue
   FillChar(BindingInfo, SizeOf(BindingInfo), 0);
   BindingInfo.Flags              := 1; // HTTP_PROPERTY_FLAG_PRESENT
   BindingInfo.RequestQueueHandle := FReqQueueHandle;
@@ -256,7 +261,7 @@ begin
       SizeOf(BindingInfo)),
     'SetUrlGroupProperty (Binding)');
 
-  // URL-Prefixes registrieren
+  // Register URL prefixes
   for Item in FUrlPrefixes do
     TDXHttpSysApi.CheckResult(
       FApi.AddUrlToUrlGroup(FUrlGroupId, PWideChar(Item.Prefix), Item.Context, 0),
@@ -267,7 +272,7 @@ procedure TDXHttpSysServer.TeardownUrlGroup;
 var
   Item: TDXUrlPrefix;
 begin
-  // URL-Prefixes entfernen
+  // Remove URL prefixes
   if FUrlGroupId <> 0 then
   begin
     for Item in FUrlPrefixes do
@@ -277,14 +282,14 @@ begin
     FUrlGroupId := 0;
   end;
 
-  // Request Queue schließen
+  // Close request queue
   if FReqQueueHandle <> INVALID_HANDLE_VALUE then
   begin
     CloseHandle(FReqQueueHandle);
     FReqQueueHandle := INVALID_HANDLE_VALUE;
   end;
 
-  // Server Session schließen
+  // Close server session
   if FSessionId <> 0 then
   begin
     FApi.CloseServerSession(FSessionId);
@@ -312,18 +317,18 @@ begin
 
   if not Assigned(FHandler) then
     raise EDXHttpSysError.CreateWin32(0,
-      'Handler muss vor Start gesetzt werden');
+      'Handler must be set before Start');
 
   if FUrlPrefixes.Count = 0 then
     raise EDXHttpSysError.CreateWin32(0,
-      'Mindestens ein URL-Prefix muss via AddUrlPrefix registriert werden');
+      'At least one URL prefix must be registered via AddUrlPrefix');
 
-  // API laden
+  // Load API
   if not FApi.Load then
     raise EDXHttpSysError.CreateWin32(GetLastError,
-      'httpapi.dll konnte nicht geladen werden');
+      'httpapi.dll could not be loaded');
 
-  // Initialisieren
+  // Initialize
   TDXHttpSysApi.CheckResult(
     FApi.Initialize(HTTPAPI_VERSION_2, HTTP_INITIALIZE_SERVER, nil),
     'HttpInitialize');
@@ -331,7 +336,7 @@ begin
   try
     SetupUrlGroup;
 
-    // Worker-Pool starten
+    // Start worker pool
     FWorkerPool := TDXHttpSysWorkerPool.Create(
       FApi, FReqQueueHandle, FThreadCount, FHandler);
     FWorkerPool.OnError := FOnError;
@@ -353,11 +358,11 @@ begin
 
   FActive := False;
 
-  // Worker-Pool stoppen (Receiver-Thread wartet auf ReceiveHttpRequest)
-  // CloseHandle auf den Queue weckt den blockierenden Aufruf auf
+  // Stop worker pool (receiver thread is blocked in ReceiveHttpRequest)
+  // CloseHandle on the queue wakes up the blocking call
   if Assigned(FWorkerPool) then
   begin
-    // Queue schließen weckt Receiver-Thread auf
+    // Closing the queue wakes up the receiver thread
     if FReqQueueHandle <> INVALID_HANDLE_VALUE then
     begin
       CloseHandle(FReqQueueHandle);

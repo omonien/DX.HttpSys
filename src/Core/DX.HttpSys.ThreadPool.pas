@@ -1,21 +1,21 @@
-// =============================================================================
-// DX.HttpSys.ThreadPool.pas
-// Receiver-Thread + Worker-Thread-Pool für TDXHttpSysServer
-//
-// Architektur:
-//   1 TDXHttpSysReceiverThread  – blockierender HttpReceiveHttpRequest-Loop
-//                                 postet Work-Items in TDXHttpSysPendingQueue
-//   N TDXHttpSysWorkerThread    – nehmen Work-Items aus der Queue,
-//                                 erzeugen Request/Response-Objekte und rufen
-//                                 IDXHttpSysRequestHandler.HandleRequest auf
-//
-// Fehlerbehandlung:
-//   Unbehandelte Exceptions in Worker-Threads → 500-Response + OnError-Callback
-//   Abgestürzter Worker-Thread → wird automatisch neu gestartet
-//
-// (c) Developer Experts LLC – MIT License
-// =============================================================================
-
+﻿/// <summary>
+///   DX.HttpSys.ThreadPool — receiver thread plus worker thread pool for TDXHttpSysServer.
+/// </summary>
+/// <remarks>
+///   Architecture:
+///     1 TDXHttpSysReceiverThread  - blocking HttpReceiveHttpRequest loop;
+///                                   posts work items into TDXHttpSysPendingQueue
+///     N TDXHttpSysWorkerThread    - take work items from the queue, create
+///                                   request/response objects and invoke
+///                                   IDXHttpSysRequestHandler.HandleRequest
+///
+///   Error handling:
+///     Unhandled exceptions in worker threads -> 500 response + OnError callback
+///     A crashed worker thread is restarted automatically
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-19</created>
+/// <license>MIT</license>
 unit DX.HttpSys.ThreadPool;
 
 {$IFDEF MSWINDOWS}
@@ -34,29 +34,29 @@ uses
   DX.HttpSys.Response;
 
 const
-  // Puffergröße für HttpReceiveHttpRequest
-  // 16 KB deckt auch Authentication-Headers ab
+  // Buffer size for HttpReceiveHttpRequest
+  // 16 KB also covers authentication headers
   DEFAULT_REQUEST_BUFFER_SIZE = 16 * 1024;
 
 type
   // ---------------------------------------------------------------------------
-  // IDXHttpSysRequestHandler – das einzige Interface, das Adapter implementieren
+  // IDXHttpSysRequestHandler - the only interface that adapters must implement
   // ---------------------------------------------------------------------------
 
   IDXHttpSysRequestHandler = interface
-    ['{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}'] // TODO: echte GUID generieren
+    ['{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}'] // TODO: generate a real GUID
     procedure HandleRequest(
       const ARequest:  TDXHttpSysRequest;
       const AResponse: TDXHttpSysResponse);
   end;
 
   // ---------------------------------------------------------------------------
-  // TDXHttpSysWorkItem – Datencontainer für die Worker-Queue
+  // TDXHttpSysWorkItem - data container for the worker queue
   // ---------------------------------------------------------------------------
 
   TDXHttpSysWorkItem = class
   public
-    RequestBuffer: TBytes;    // Kopie des rohen HTTP_REQUEST-Puffers
+    RequestBuffer: TBytes;    // Copy of the raw HTTP_REQUEST buffer
     QueueHandle:   THandle;
     RequestId:     HTTP_REQUEST_ID;
     destructor Destroy; override;
@@ -92,7 +92,7 @@ type
   end;
 
   // ---------------------------------------------------------------------------
-  // TDXHttpSysWorkerPool – Koordination Receiver + Worker-Threads
+  // TDXHttpSysWorkerPool - coordinates receiver + worker threads
   // ---------------------------------------------------------------------------
 
   TOnHttpSysError = procedure(const AException: Exception; const AContext: string) of object;
@@ -122,7 +122,7 @@ type
     procedure Start;
     procedure Stop;
 
-    // Interner Zugriff durch Threads
+    // Internal access by the threads
     property Api:          TDXHttpSysApi           read FApi;
     property QueueHandle:  THandle                 read FQueueHandle;
     property Handler:      IDXHttpSysRequestHandler read FHandler;
@@ -130,7 +130,7 @@ type
                                                    read FPendingQueue;
     property Active:       Boolean                 read FActive;
 
-    // Optionaler Error-Callback (z.B. für Logging)
+    // Optional error callback (e.g. for logging)
     property OnError:      TOnHttpSysError         read FOnError write FOnError;
 
     procedure ReportError(const AException: Exception; const AContext: string);
@@ -144,7 +144,7 @@ implementation
 
 destructor TDXHttpSysWorkItem.Destroy;
 begin
-  // RequestBuffer wird durch TBytes automatisch freigegeben
+  // RequestBuffer is released automatically by TBytes
   inherited;
 end;
 
@@ -174,15 +174,15 @@ begin
     BytesRecvd := 0;
     ReqPtr := PHTTP_REQUEST(@FRequestBuffer[0]);
 
-    // Blockierender Aufruf – wartet bis ein Request eintrifft
+    // Blocking call - waits until a request arrives
     Result_ := FPool.Api.ReceiveHttpRequest(
       FPool.QueueHandle,
-      HTTP_NULL_ID,         // 0 = nächsten beliebigen Request
+      HTTP_NULL_ID,         // 0 = next arbitrary request
       HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY,
       ReqPtr,
       Length(FRequestBuffer),
       @BytesRecvd,
-      nil);                 // synchron
+      nil);                 // synchronous
 
     if Terminated then
       Break;
@@ -190,7 +190,7 @@ begin
     case Result_ of
       ERROR_SUCCESS:
       begin
-        // Work-Item mit Kopie des Puffers erzeugen
+        // Create a work item with a copy of the buffer
         WorkItem := TDXHttpSysWorkItem.Create;
         SetLength(WorkItem.RequestBuffer, BytesRecvd);
         Move(FRequestBuffer[0], WorkItem.RequestBuffer[0], BytesRecvd);
@@ -202,16 +202,16 @@ begin
 
       ERROR_MORE_DATA:
       begin
-        // Puffer zu klein – Request abweisen und mit 400 antworten
-        // TODO: Puffer dynamisch vergrößern
+        // Buffer too small - reject the request and respond with 400
+        // TODO: grow the buffer dynamically
         FPool.ReportError(
-          Exception.Create('Request-Puffer zu klein (ERROR_MORE_DATA)'),
+          Exception.Create('Request buffer too small (ERROR_MORE_DATA)'),
           'Receiver');
       end;
 
       ERROR_CONNECTION_INVALID,
       ERROR_NETNAME_DELETED:
-        // Client hat die Verbindung getrennt – ignorieren
+        // Client disconnected - ignore
         ;
 
     else
@@ -272,13 +272,13 @@ begin
           begin
             FPool.ReportError(E, Format('HandleRequest [%s %s]',
               [Request.Method, Request.Path]));
-            // 500 senden, falls noch nicht gesendet
+            // Send 500 if not sent yet
             if not Response.Sent then
               Response.SendError(500);
           end;
         end;
 
-        // Sicherstellen dass immer gesendet wurde
+        // Ensure a response is always sent
         if not Response.Sent then
           Response.Send;
 
@@ -308,7 +308,7 @@ begin
   FWorkerCount  := AWorkerCount;
   FActive       := False;
 
-  // Kapazität: 10× Worker-Count als sinnvoller Puffer
+  // Capacity: 10x worker count as a reasonable buffer
   FPendingQueue := TThreadedQueue<TDXHttpSysWorkItem>.Create(
     FWorkerCount * 10, INFINITE, INFINITE);
 
@@ -333,11 +333,11 @@ begin
 
   FActive := True;
 
-  // Worker-Threads starten
+  // Start worker threads
   for I := 1 to FWorkerCount do
     FWorkerThreads.Add(TDXHttpSysWorkerThread.Create(Self));
 
-  // Receiver-Thread starten
+  // Start receiver thread
   FReceiverThread := TDXHttpSysReceiverThread.Create(Self);
 end;
 
@@ -350,21 +350,21 @@ begin
 
   FActive := False;
 
-  // Receiver-Thread beenden
+  // Stop the receiver thread
   if Assigned(FReceiverThread) then
   begin
     FReceiverThread.Terminate;
-    // HttpCloseRequestQueue weckt den blockierenden ReceiveHttpRequest auf
-    // (wird vom TDXHttpSysServer aufgerufen bevor Stop hier landet)
+    // HttpCloseRequestQueue wakes up the blocking ReceiveHttpRequest
+    // (called by TDXHttpSysServer before control reaches Stop here)
     FReceiverThread.WaitFor;
     FreeAndNil(FReceiverThread);
   end;
 
-  // Worker-Threads: nil-Items pushen um WaitFor zu ermöglichen
+  // Worker threads: push nil items to allow WaitFor to complete
   for Thread in FWorkerThreads do
   begin
     Thread.Terminate;
-    FPendingQueue.PushItem(nil); // Weckt blockierende PopItem auf
+    FPendingQueue.PushItem(nil); // Wakes up a blocking PopItem
   end;
 
   for Thread in FWorkerThreads do
@@ -379,12 +379,12 @@ procedure TDXHttpSysWorkerPool.ReportError(
 begin
   if Assigned(FOnError) then
     FOnError(AException, AContext);
-  // Wenn kein Handler: Exception still schlucken (Worker-Thread soll weiterlaufen)
+  // No handler: swallow the exception silently (the worker thread keeps running)
 end;
 
 {$ENDIF MSWINDOWS}
 
-// Platzhalter für HTTP_NULL_ID – falls nicht in Winapi.Windows definiert
+// Placeholder for HTTP_NULL_ID - in case it is not defined in Winapi.Windows
 const
   HTTP_NULL_ID: HTTP_REQUEST_ID = 0;
 
