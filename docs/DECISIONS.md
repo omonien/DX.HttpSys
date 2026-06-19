@@ -68,4 +68,24 @@ It also gives the loader a natural lifecycle: `Unload` runs in the destructor.
 want. Never reintroduce a record here, and never rely on implicit zero-init of a record
 that has a "already done" early-exit flag.
 
+### A-3 — QueueLength is request-queue state, deferred to Phase 2
+**Decision:** `QueueLength` is stored as configuration in Phase 1 but **not** applied
+to HTTP.sys yet.
+
+**Why:** `HttpServerQueueLengthProperty` is a property of the **request queue**, set via
+`HttpSetRequestQueueProperty(FReqQueueHandle, ...)` — not a URL-group property. The
+scaffolding applied it through `SetUrlGroupProperty`, which silently no-ops. Rather than
+keep a fake apply, Phase 1 stores the value and the real call is wired together with the
+rest of the server runtime in Phase 2 (which also needs `HttpSetRequestQueueProperty`
+added to the loader). Flagged by both review bots on PR #1.
+
+**How to apply:** In Phase 2, add `HttpSetRequestQueueProperty` to `TDXHttpSysApi`, apply
+`FQueueLength` to the queue handle right after `CreateRequestQueue` in `SetupUrlGroup`
+with `CheckResult`, and allow a live update from the setter when active.
+
+## Phase status
+
+- **Phase 1 (PR #1):** Windows-only Core compiles clean (Win32+Win64), API smoke tests
+  green (6/6, 0 leaks). Self-review + both GitHub bots (Augment, Copilot) addressed.
+
 <!-- New architecture decisions are appended below. -->
