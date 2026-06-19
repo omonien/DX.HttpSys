@@ -18,11 +18,9 @@ unit DX.HttpSys.Api;
 interface
 
 uses
-  System.SysUtils
-  {$IFDEF MSWINDOWS}
-  , Winapi.Windows
-  , DX.HttpSys.Api.Types
-  {$ENDIF};
+  System.SysUtils,
+  Winapi.Windows,
+  DX.HttpSys.Api.Types;
 
 type
   EDXHttpSysError = class(Exception)
@@ -33,17 +31,17 @@ type
     property ErrorCode: Cardinal read FErrorCode;
   end;
 
+  /// <summary>Raised when a requested HTTP.sys feature is unavailable on the
+  /// running Windows version (e.g. HTTP/2 on an older build).</summary>
   EDXHttpSysNotSupported = class(EDXHttpSysError);
-
-{$IFDEF MSWINDOWS}
 
   // ---------------------------------------------------------------------------
   // Function signatures
   // ---------------------------------------------------------------------------
 
   TFnHttpInitialize = function(
-    Version: THTTP_VERSION;
-    Flags:   ULONG;
+    Version:   THTTP_VERSION;
+    Flags:     ULONG;
     pReserved: Pointer): ULONG; stdcall;
 
   TFnHttpTerminate = function(
@@ -124,10 +122,14 @@ type
     pLogData:       Pointer): ULONG; stdcall;
 
   // ---------------------------------------------------------------------------
-  // Main structure: TDXHttpSysApi
+  // TDXHttpSysApi — runtime function table for httpapi.dll v2.0.
+  //
+  // This is a CLASS, not a record: an instance is always zero-initialised on
+  // Create, so the "already loaded" early-exit in Load and the function pointers
+  // are never seen as uninitialised garbage. See docs/DECISIONS.md (A-2).
   // ---------------------------------------------------------------------------
 
-  TDXHttpSysApi = record
+  TDXHttpSysApi = class
   private
     FLibHandle: THandle;
     FLoaded:    Boolean;
@@ -158,6 +160,12 @@ type
     ReceiveRequestEntityBody: TFnHttpReceiveRequestEntityBody;
     SendHttpResponse:         TFnHttpSendHttpResponse;
 
+    // Unloads the DLL (if still loaded) before the instance is freed.
+    destructor Destroy; override;
+
+    // Convenience: HttpInitialize with HTTPAPI_VERSION_2.
+    function  InitializeV2(AFlags: ULONG): ULONG;
+
     // Loads httpapi.dll and all function pointers.
     // Returns False when the DLL cannot be found.
     function  Load: Boolean;
@@ -175,8 +183,6 @@ type
     class function  ResultToString(AResult: ULONG): string; static;
   end;
 
-{$ENDIF MSWINDOWS}
-
 implementation
 
 // -----------------------------------------------------------------------------
@@ -186,29 +192,37 @@ implementation
 constructor EDXHttpSysError.CreateWin32(AErrorCode: Cardinal; const AContext: string);
 begin
   FErrorCode := AErrorCode;
-  {$IFDEF MSWINDOWS}
-  inherited CreateFmt('[DX.HttpSys] %s – Win32 Error %d: %s',
-    [AContext, AErrorCode, SysErrorMessage(AErrorCode)]);
-  {$ELSE}
-  inherited CreateFmt('[DX.HttpSys] %s – Error %d', [AContext, AErrorCode]);
-  {$ENDIF}
+  if AErrorCode = 0 then
+    inherited CreateFmt('[DX.HttpSys] %s', [AContext])
+  else
+    inherited CreateFmt('[DX.HttpSys] %s – Win32 Error %d: %s',
+      [AContext, AErrorCode, SysErrorMessage(AErrorCode)]);
 end;
-
-{$IFDEF MSWINDOWS}
 
 // -----------------------------------------------------------------------------
 // TDXHttpSysApi
 // -----------------------------------------------------------------------------
 
+destructor TDXHttpSysApi.Destroy;
+begin
+  Unload;
+  inherited;
+end;
+
+function TDXHttpSysApi.InitializeV2(AFlags: ULONG): ULONG;
+begin
+  Result := Initialize(HTTPAPI_VERSION_2, AFlags, nil);
+end;
+
 function TDXHttpSysApi.GetProc(const AName: string): Pointer;
 begin
-  Result := GetProcAddress(FLibHandle, PChar(AName));
+  // GetProcAddress takes an ANSI (LPCSTR) symbol name — there is no wide variant.
+  Result := GetProcAddress(FLibHandle, PAnsiChar(AnsiString(AName)));
   // Missing optional functions yield nil; critical ones are checked in Load.
 end;
 
 function TDXHttpSysApi.Load: Boolean;
 begin
-  Result := False;
   if FLoaded then
     Exit(True);
 
@@ -275,7 +289,5 @@ class function TDXHttpSysApi.ResultToString(AResult: ULONG): string;
 begin
   Result := SysErrorMessage(AResult);
 end;
-
-{$ENDIF MSWINDOWS}
 
 end.

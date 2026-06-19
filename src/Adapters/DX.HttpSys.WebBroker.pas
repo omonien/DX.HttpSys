@@ -24,8 +24,6 @@
 /// <license>MIT</license>
 unit DX.HttpSys.WebBroker;
 
-{$IFDEF MSWINDOWS}
-
 interface
 
 uses
@@ -317,7 +315,5 @@ begin
     WebResp.Free;
   end;
 end;
-
-{$ENDIF MSWINDOWS}
 
 end.

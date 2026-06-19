@@ -15,7 +15,7 @@ uses
   DUnitX.Loggers.Console,
   DUnitX.Loggers.Xml.NUnit,
   DUnitX.TestFramework,
-  Test.DX.HttpSys.Sample in 'Test.DX.HttpSys.Sample.pas';
+  Test.DX.HttpSys.Api in 'Test.DX.HttpSys.Api.pas';
 
 var
   LRunner: ITestRunner;

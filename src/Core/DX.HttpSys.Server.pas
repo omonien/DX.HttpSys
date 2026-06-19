@@ -26,8 +26,6 @@
 
 unit DX.HttpSys.Server;
 
-{$IFDEF MSWINDOWS}
-
 interface
 
 uses
@@ -69,10 +67,13 @@ type
     FOnError:         TOnHttpSysError;
 
     procedure CheckNotActive(const AProperty: string);
-    procedure CheckActive(const AOperation: string);
     procedure SetupUrlGroup;
     procedure TeardownUrlGroup;
+    procedure SetPort(AValue: Word);
     procedure SetQueueLength(AValue: Cardinal);
+    procedure SetThreadCount(AValue: Integer);
+    procedure SetServerHeader(const AValue: string);
+    procedure SetHandler(const AValue: IDXHttpSysRequestHandler);
   public
     constructor Create;
     destructor  Destroy; override;
@@ -80,23 +81,24 @@ type
     // --- Configuration (set before Start) ---
 
     // Listening port (default: 8080)
-    // Only used for automatic prefix generation when
-    // AddUrlPrefix is not called explicitly.
-    property Port:         Word     read FPort         write FPort;
+    // Only used for automatic prefix generation by UseLocalhost /
+    // UseAllInterfaces when AddUrlPrefix is not called explicitly.
+    property Port:         Word     read FPort         write SetPort;
 
-    // Length of the kernel request queue (default: 1000)
-    property QueueLength:  Cardinal read FQueueLength   write FQueueLength;
+    // Length of the kernel request queue (default: 1000).
+    // May be changed while active; the new length is applied immediately.
+    property QueueLength:  Cardinal read FQueueLength   write SetQueueLength;
 
     // Number of worker threads (default: System.CPUCount * 2)
-    property ThreadCount:  Integer  read FThreadCount   write FThreadCount;
+    property ThreadCount:  Integer  read FThreadCount   write SetThreadCount;
 
     // Server header value (default: 'DX.HttpSys/1.0')
     // HTTP.sys automatically appends ' Microsoft-HTTPAPI/2.0'
-    property ServerHeader: string   read FServerHeader  write FServerHeader;
+    property ServerHeader: string   read FServerHeader  write SetServerHeader;
 
     // The handler interface – must be set before Start
     property Handler:      IDXHttpSysRequestHandler
-                                    read FHandler       write FHandler;
+                                    read FHandler       write SetHandler;
 
     // Optional error callback for logging
     property OnError:      TOnHttpSysError
@@ -166,11 +168,28 @@ begin
       Format('Property "%s" can only be changed before Start', [AProperty]));
 end;
 
-procedure TDXHttpSysServer.CheckActive(const AOperation: string);
+procedure TDXHttpSysServer.SetPort(AValue: Word);
 begin
-  if not FActive then
-    raise EDXHttpSysError.CreateWin32(0,
-      Format('Operation "%s" requires an active server', [AOperation]));
+  CheckNotActive('Port');
+  FPort := AValue;
+end;
+
+procedure TDXHttpSysServer.SetThreadCount(AValue: Integer);
+begin
+  CheckNotActive('ThreadCount');
+  FThreadCount := AValue;
+end;
+
+procedure TDXHttpSysServer.SetServerHeader(const AValue: string);
+begin
+  CheckNotActive('ServerHeader');
+  FServerHeader := AValue;
+end;
+
+procedure TDXHttpSysServer.SetHandler(const AValue: IDXHttpSysRequestHandler);
+begin
+  CheckNotActive('Handler');
+  FHandler := AValue;
 end;
 
 // --- URL management ---
@@ -324,13 +343,17 @@ begin
       'At least one URL prefix must be registered via AddUrlPrefix');
 
   // Load API
+  FApi := TDXHttpSysApi.Create;
   if not FApi.Load then
+  begin
+    FreeAndNil(FApi);
     raise EDXHttpSysError.CreateWin32(GetLastError,
       'httpapi.dll could not be loaded');
+  end;
 
   // Initialize
   TDXHttpSysApi.CheckResult(
-    FApi.Initialize(HTTPAPI_VERSION_2, HTTP_INITIALIZE_SERVER, nil),
+    FApi.InitializeV2(HTTP_INITIALIZE_SERVER),
     'HttpInitialize');
 
   try
@@ -346,7 +369,7 @@ begin
   except
     TeardownUrlGroup;
     FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
-    FApi.Unload;
+    FreeAndNil(FApi);
     raise;
   end;
 end;
@@ -375,15 +398,16 @@ begin
 
   TeardownUrlGroup;
 
-  FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
-  FApi.Unload;
+  if Assigned(FApi) then
+  begin
+    FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
+    FreeAndNil(FApi);
+  end;
 end;
 
 function TDXHttpSysServer.GetServerImplementation: TObject;
 begin
   Result := Self;
 end;
-
-{$ENDIF MSWINDOWS}
 
 end.

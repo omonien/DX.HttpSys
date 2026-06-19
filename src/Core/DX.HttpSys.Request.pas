@@ -17,8 +17,6 @@
 /// <license>MIT</license>
 unit DX.HttpSys.Request;
 
-{$IFDEF MSWINDOWS}
-
 interface
 
 uses
@@ -26,7 +24,7 @@ uses
   System.Classes,
   System.Generics.Collections,
   Winapi.Windows,
-  Winapi.WinSock,
+  Winapi.WinSock2,
   DX.HttpSys.Api.Types,
   DX.HttpSys.Api;
 
@@ -361,7 +359,5 @@ begin
       Result := '[IPv6]'; // TODO: full IPv6 formatting
   end;
 end;
-
-{$ENDIF MSWINDOWS}
 
 end.

@@ -44,4 +44,28 @@ user's explicit instruction and YAGNI, we drop this now. The units simply *are* 
 is kept as an exception type for genuine runtime "feature not available on this Windows"
 situations, but is no longer tied to the platform-compile story.
 
+### A-2 — `TDXHttpSysApi` is a class, not a record
+**Decision:** The API loader/dispatch table `TDXHttpSysApi` is a **class** (was a `record`
+in the scaffolding).
+
+**Why (root-caused, not guessed):** As a record with no managed fields, a local
+`TDXHttpSysApi` variable is **not** zero-initialised by Delphi. `Load` begins with
+`if FLoaded then Exit(True)` — with an uninitialised `FLoaded` holding garbage (≠ 0),
+`Load` returned `True` immediately **without loading httpapi.dll or resolving any function
+pointer**. Every pointer stayed garbage, so the first real API call
+(`HttpInitialize`) jumped to a junk address and corrupted the stack/heap. The failure was
+nondeterministic: a standalone program happened to get a zeroed stack and "worked", while
+the DUnitX runner (methods invoked via RTTI, garbage on the stack) crashed with
+`EAccessViolation` / `EInvalidPointer`. This was proven by reducing to a minimal program
+and observing that `LApi := Default(TDXHttpSysApi)` before `Load` made the crash vanish.
+
+A class instance is always zero-initialised on `Create`, which removes the entire failure
+mode at the source instead of relying on every caller remembering to pre-zero the record.
+It also gives the loader a natural lifecycle: `Unload` runs in the destructor.
+
+**How to apply:** Consumers (Server, Request, Response, ThreadPool) hold the API as an
+**object reference**, so they all share the one loaded function table — which is what we
+want. Never reintroduce a record here, and never rely on implicit zero-init of a record
+that has a "already done" early-exit flag.
+
 <!-- New architecture decisions are appended below. -->

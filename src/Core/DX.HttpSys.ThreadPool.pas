@@ -18,8 +18,6 @@
 /// <license>MIT</license>
 unit DX.HttpSys.ThreadPool;
 
-{$IFDEF MSWINDOWS}
-
 interface
 
 uses
@@ -44,7 +42,7 @@ type
   // ---------------------------------------------------------------------------
 
   IDXHttpSysRequestHandler = interface
-    ['{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}'] // TODO: generate a real GUID
+    ['{6FFE159C-82F2-4FF1-8BA6-3F2544EC5C49}']
     procedure HandleRequest(
       const ARequest:  TDXHttpSysRequest;
       const AResponse: TDXHttpSysResponse);
@@ -108,9 +106,6 @@ type
     FWorkerThreads:   TObjectList<TDXHttpSysWorkerThread>;
     FOnError:         TOnHttpSysError;
     FActive:          Boolean;
-
-    procedure HandleWorkerError(const AException: Exception;
-      AWorkItem: TDXHttpSysWorkItem);
   public
     constructor Create(
       const AApi:       TDXHttpSysApi;
@@ -381,11 +376,5 @@ begin
     FOnError(AException, AContext);
   // No handler: swallow the exception silently (the worker thread keeps running)
 end;
-
-{$ENDIF MSWINDOWS}
-
-// Placeholder for HTTP_NULL_ID - in case it is not defined in Winapi.Windows
-const
-  HTTP_NULL_ID: HTTP_REQUEST_ID = 0;
 
 end.
