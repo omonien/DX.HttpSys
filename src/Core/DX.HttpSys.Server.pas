@@ -178,6 +178,10 @@ end;
 procedure TDXHttpSysServer.SetThreadCount(AValue: Integer);
 begin
   CheckNotActive('ThreadCount');
+  // The worker pool sizes its queue and spawns threads from this count, so a
+  // zero/negative value would leave the server unable to process requests.
+  if AValue < 1 then
+    raise EDXHttpSysError.CreateWin32(0, 'ThreadCount must be at least 1');
   FThreadCount := AValue;
 end;
 
