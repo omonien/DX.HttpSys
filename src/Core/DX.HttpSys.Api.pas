@@ -215,6 +215,11 @@ end;
 
 function TDXHttpSysApi.InitializeV2(AFlags: ULONG): ULONG;
 begin
+  // Fail deterministically if a caller forgot Load, instead of an AV on a nil
+  // function pointer.
+  if not FLoaded then
+    raise EDXHttpSysError.CreateWin32(0,
+      'TDXHttpSysApi.InitializeV2 called before a successful Load');
   Result := Initialize(HTTPAPI_VERSION_2, AFlags, nil);
 end;
 

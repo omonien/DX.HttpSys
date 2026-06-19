@@ -40,6 +40,9 @@ type
 
     [Test]
     procedure CheckResult_Failure_RaisesWithContext;
+
+    [Test]
+    procedure InitializeV2_BeforeLoad_RaisesDeterministically;
   end;
 
 implementation
@@ -132,6 +135,26 @@ begin
     end,
     EDXHttpSysError,
     'A non-zero result must raise EDXHttpSysError');
+end;
+
+procedure TApiSmokeTests.InitializeV2_BeforeLoad_RaisesDeterministically;
+var
+  LApi: TDXHttpSysApi;
+begin
+  // Calling an API method before Load must fail with a clear exception,
+  // not an access violation on a nil function pointer.
+  LApi := TDXHttpSysApi.Create;
+  try
+    Assert.WillRaise(
+      procedure
+      begin
+        LApi.InitializeV2(HTTP_INITIALIZE_SERVER);
+      end,
+      EDXHttpSysError,
+      'InitializeV2 before Load must raise EDXHttpSysError');
+  finally
+    LApi.Free;
+  end;
 end;
 
 initialization
