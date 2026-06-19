@@ -29,6 +29,12 @@ on:
 jobs:
   build-and-test:
     runs-on: [ self-hosted, windows, delphi ]
+    # SECURITY: this runs on a self-hosted machine, so never run untrusted code
+    # from a forked PR on it. Push/dispatch always run; pull_request runs only
+    # when it comes from a branch in THIS repository (not a fork).
+    if: >
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout (with submodules for DUnitX)
         uses: actions/checkout@v4

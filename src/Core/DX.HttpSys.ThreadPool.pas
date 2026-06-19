@@ -48,14 +48,19 @@ type
   /// </summary>
   /// <remarks>
   ///   The request and response are valid only for the duration of the call and
-  ///   are not thread-safe. An unhandled exception is turned into a 500 response
-  ///   and reported via the server's OnError callback; the worker keeps running.
+  ///   are not thread-safe. Calling <c>AResponse.Send</c> is optional: if the
+  ///   handler returns without having sent, the worker sends the response for it.
+  ///   An unhandled exception is turned into a 500 response and reported via the
+  ///   server's OnError callback; the worker keeps running.
   /// </remarks>
   IDXHttpSysRequestHandler = interface
     ['{6FFE159C-82F2-4FF1-8BA6-3F2544EC5C49}']
     /// <summary>Handle one request and fill in the response.</summary>
     /// <param name="ARequest">The incoming request (read-only).</param>
-    /// <param name="AResponse">The response to populate and send.</param>
+    /// <param name="AResponse">
+    ///   The response to populate. Set status/headers/body; you may call Send
+    ///   explicitly, but if you don't, the server sends it after you return.
+    /// </param>
     procedure HandleRequest(
       const ARequest:  TDXHttpSysRequest;
       const AResponse: TDXHttpSysResponse);
