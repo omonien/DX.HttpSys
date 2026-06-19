@@ -29,10 +29,10 @@ uses
   DX.HttpSys.Api;
 
 type
-  // ---------------------------------------------------------------------------
-  // TDXHttpHeaders – simple name/value list for request and response headers
-  // ---------------------------------------------------------------------------
-
+  /// <summary>
+  ///   A case-insensitive name/value collection used for both request and
+  ///   response headers. Access values via the default <c>Values</c> property.
+  /// </summary>
   TDXHttpHeaders = class
   private
     FItems: TDictionary<string, string>;
@@ -52,10 +52,12 @@ type
       read GetHeader write SetHeader; default;
   end;
 
-  // ---------------------------------------------------------------------------
-  // TDXHttpSysRequest
-  // ---------------------------------------------------------------------------
-
+  /// <summary>
+  ///   An incoming HTTP request, exposing Delphi-friendly properties over the
+  ///   raw HTTP.sys request buffer. Always uses the pre-parsed CookedUrl; the
+  ///   body is loaded lazily on first access to <c>Body</c>.
+  /// </summary>
+  /// <remarks>Not thread-safe — use only on the owning worker thread.</remarks>
   TDXHttpSysRequest = class
   private
     FApi:           TDXHttpSysApi;       // Reference, not owned

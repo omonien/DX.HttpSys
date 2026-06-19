@@ -45,10 +45,18 @@ type
     Context: HTTP_URL_CONTEXT;
   end;
 
-  // ---------------------------------------------------------------------------
-  // TDXHttpSysServer
-  // ---------------------------------------------------------------------------
-
+  /// <summary>
+  ///   The public face of the engine: a kernel-mode HTTP.sys server. Configure
+  ///   the port, worker count and URL prefixes, assign an
+  ///   <see cref="IDXHttpSysRequestHandler"/>, then call <c>Start</c>.
+  /// </summary>
+  /// <remarks>
+  ///   Configuration properties may only be changed while the server is stopped.
+  ///   After <c>Start</c> the server is thread-safe for reading properties; each
+  ///   request is handled on a worker thread. Use <c>UseLocalhost</c> for a
+  ///   loopback bind that needs no elevated rights, or <c>AddUrlPrefix</c> /
+  ///   <c>UseAllInterfaces</c> for a wildcard bind (requires a URL ACL or admin).
+  /// </remarks>
   TDXHttpSysServer = class
   private
     FApi:             TDXHttpSysApi;

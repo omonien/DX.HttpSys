@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Delphi 11.3+](https://img.shields.io/badge/Delphi-11.3%2B-E62431.svg?logo=delphi&logoColor=white)](https://www.embarcadero.com/products/delphi)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%20x86%20%7C%20x64-0078D6.svg?logo=windows&logoColor=white)](#requirements)
-[![Status: In Development](https://img.shields.io/badge/Status-In%20Development-orange.svg)](#roadmap)
+[![Status: Core complete](https://img.shields.io/badge/Status-Core%20complete%20%C2%B7%20tested-brightgreen.svg)](#roadmap)
 [![No external dependencies](https://img.shields.io/badge/Dependencies-none-brightgreen.svg)](#why-httpsys)
 
 **English** · [Deutsch](README.de.md)
@@ -95,7 +95,8 @@ end;
 
 ## Quick start
 
-> ⚠️ **Work in progress.** The API below is the target design from the [PRD](docs/PRD.md). Code is being implemented along the [roadmap](#roadmap).
+> The core engine and the WebBroker adapter are implemented and tested. The snippets below
+> are the real API; see [`demo/`](demo/) for runnable examples.
 
 ### Standalone (core only, no framework)
 
@@ -115,18 +116,38 @@ begin
 end;
 ```
 
-### WiRL — swap Indy for HTTP.sys in one line
+### WebBroker — run your WebModule on HTTP.sys
 
 ```pascal
 uses
-  DX.HttpSys.WiRL,   // <-- instead of WiRL.http.Server.Indy
+  DX.HttpSys.Server, DX.HttpSys.WebBroker, Web.WebReq;
+
+// Register your WebModule with WebBroker as usual, then host it on HTTP.sys:
+Server := TDXHttpSysServer.Create;
+Server.Handler := TWebBrokerHttpSysDispatcher.Create;
+Server.AddUrlPrefix('http://localhost:8080/');
+Server.Start;
+```
+
+See [`demo/03.WebBroker`](demo/03.WebBroker) for a complete, runnable example.
+
+### WiRL — select the HTTP.sys engine
+
+```pascal
+uses
+  DX.HttpSys.WiRL,   // registers the 'HttpSys' WiRL server engine
   WiRL.http.Server;
 
 FServer := TWiRLServer.Create(nil);
 FServer.ServerPort := 8080;
-// ... your existing WiRL engine configuration ...
+FServer.ServerEngine := 'HttpSys';   // use HTTP.sys instead of Indy
+// ... your existing WiRL engine/application configuration ...
 FServer.Active := True;
 ```
+
+> ℹ️ The WiRL adapter is written against the WiRL API but is **not built or tested in this
+> repository** — WiRL is an external dependency that is intentionally not vendored. Treat it
+> as best-effort until verified with WiRL installed (see [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10).
 
 ---
 
@@ -175,15 +196,21 @@ There is currently **no standalone, open-source HTTP.sys library** in the Delphi
 
 ## Roadmap
 
-- [ ] **M1 — API foundation:** WinAPI structures, `GetProcAddress` loader, smoke test
-- [ ] **M2 — Core server (single-threaded):** Request/Response/Server, Hello-World demo
-- [ ] **M3 — Threading:** receiver + worker thread pool, load test
-- [ ] **M4 — WiRL adapter:** REST resource served via HTTP.sys
-- [ ] **M5 — WebBroker adapter:** WebModule served via HTTP.sys
-- [ ] **M6 — Test suite & hardening:** DUnitX, integration, stress/soak, leak checks, perf baseline
-- [ ] **M7 — Packaging & docs:** Delphi packages, full README, XML doc comments
+- [x] **M1 — API foundation:** WinAPI structures, `GetProcAddress` loader, smoke tests
+- [x] **M2 — Core server:** Request/Response/Server, header transmission, Hello-World demo
+- [x] **M3 — Threading:** receiver + worker thread pool, concurrency/stress harness
+- [ ] **M4 — WiRL adapter:** written against the WiRL API, but *not built/tested here* — WiRL
+      is an external dependency that is intentionally not vendored, so this adapter ships as
+      best-effort source (see [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10)
+- [x] **M5 — WebBroker adapter:** real WebModule served via HTTP.sys, with E2E tests + demo
+- [x] **M6 — Test suite & hardening:** DUnitX unit + integration + concurrency stress + soak
+      and leak/handle checks (18 tests, 0 leaks)
+- [x] **M7 — Packaging & docs:** Delphi packages, CI workflow, README, XML doc comments
 
-See the full [Product Requirements Document](docs/PRD.md) for the complete design.
+The core engine and the WebBroker adapter are implemented, build clean on Win32 + Win64, and
+are covered by a green test suite. The WiRL adapter awaits verification on a machine with WiRL
+installed. See the full [Product Requirements Document](docs/PRD.md) for the complete design and
+[`docs/DECISIONS.md`](docs/DECISIONS.md) for the architecture decisions taken along the way.
 
 ---
 

@@ -26,10 +26,12 @@ uses
   DX.HttpSys.Request;
 
 type
-  // ---------------------------------------------------------------------------
-  // TDXHttpSysResponse
-  // ---------------------------------------------------------------------------
-
+  /// <summary>
+  ///   The outgoing HTTP response. Set <c>StatusCode</c>, headers and body (via
+  ///   <c>SetBody</c>/<c>SetJsonBody</c> or by writing to <c>Body</c>), then call
+  ///   <c>Send</c>. <c>Send</c> may be called only once.
+  /// </summary>
+  /// <remarks>Not thread-safe — use only on the owning worker thread.</remarks>
   TDXHttpSysResponse = class
   private
     FApi:          TDXHttpSysApi;    // Reference, not owned
