@@ -126,4 +126,68 @@ once per response object, so "once per Send" and "once per instance" coincide in
   Server header pass-through, QueueLength via HttpSetRequestQueueProperty (A-3 resolved),
   E2E integration tests (12/12, 0 leaks), and a live-verified standalone demo.
 
+### A-5 — Each request owns its receive buffer (no copy) — fixes cross-talk under load
+**Decision:** The receiver thread allocates a **fresh buffer per request**, lets HTTP.sys
+write the `HTTP_REQUEST` directly into it, and transfers **ownership** of that buffer to
+the work item by reference (`WorkItem.RequestBuffer := Buffer; Buffer := nil`). It does
+**not** `Move` the bytes into a separate buffer.
+
+**Why (found by the stress harness, root-caused):** `HTTP_REQUEST` contains **absolute
+pointers** into the receive buffer — `CookedUrl.pFullUrl` / `pAbsPath` / `pQueryString`,
+the known/unknown header `pRawValue`s, the entity chunks. The original code received into a
+single shared `FRequestBuffer` and `Move`d the bytes into a per-work-item buffer. The bytes
+were copied, but those internal pointers still referenced the **shared** `FRequestBuffer`.
+By the time a worker parsed the request, the receiver had already overwritten
+`FRequestBuffer` with a **later** request — so `/req-6` returned the body for `/req-3`.
+
+Single-request tests never caught this (the buffer wasn't reused before parsing). The
+concurrency harness exposed it immediately: 42/500 GET and 161/300 POST responses were
+crossed. The fix removes the copy entirely: the buffer HTTP.sys wrote into is the exact
+buffer the worker reads from, and it lives (owned by the work item) until the worker is
+done. `TBytes` reference semantics make the ownership transfer a single assignment.
+
+**How to apply:** Never copy an `HTTP_REQUEST` to a different address and then read its
+internal pointers — they do not survive the move. Keep the buffer that HTTP.sys filled
+alive for as long as anything reads the parsed request, and never reuse it for another
+receive until then. This is the single most important correctness invariant in the engine.
+
+### A-6 — Body loading must read inline entity chunks first (COPY_BODY)
+**Decision:** `TDXHttpSysRequest.LoadBody` reads the request's **inline entity chunks**
+(`pEntityChunks`) first, and only calls `HttpReceiveRequestEntityBody` for the remainder
+when `HTTP_REQUEST_FLAG_MORE_ENTITY_BODY_EXISTS` is set.
+
+**Why (found by the POST stress harness):** `HttpReceiveHttpRequest` is called with
+`HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY`, so a body that fits in the request buffer is
+delivered **inline** as entity chunks and is **not** returned again by
+`HttpReceiveRequestEntityBody` (which then reports `ERROR_HANDLE_EOF`). The original
+`LoadBody` ignored the inline chunks and only called `ReceiveRequestEntityBody`, so for any
+request whose body was copied inline it returned an **empty** body. Single POST tests passed
+by luck (timing sometimes left the body for a separate receive); under load the body was
+reliably inline, so 174/300 POST bodies came back empty.
+
+**How to apply:** With `COPY_BODY`, always consume `pEntityChunks` before falling back to
+`ReceiveRequestEntityBody`. The fallback is only for bodies too large to copy inline.
+
+### A-7 — Worker shutdown polls for termination; no nil wake-up items
+**Decision:** Worker threads pop from the pending queue with a **finite (100 ms) timeout**
+and observe `Terminated` on each tick. `Stop` simply terminates the workers, waits, then
+drains and frees any leftover work items.
+
+**Why (found by the stress harness):** The original `Stop` pushed one nil "wake-up" item
+per worker into the bounded queue. Under load the queue is full, and once a worker is
+terminated it leaves its loop without draining further — so the nil pushes blocked forever
+on the full queue and `Stop` deadlocked. Running the two stress tests back to back hung
+reliably. Timeout-based polling removes the need for wake-up items entirely; the queue
+drain reclaims work-item buffers that would otherwise leak.
+
+The receiver also breaks its loop on `ERROR_INVALID_HANDLE` / `ERROR_OPERATION_ABORTED`
+(the queue handle being closed during shutdown) instead of spinning on a dead handle.
+
+## Phase status (updated)
+
+- **Phase 3 (PR #3):** Threading hardened and proven under load. The concurrency harness
+  found three real bugs that single-request tests missed — request cross-talk (A-5), empty
+  bodies under load (A-6), and a shutdown deadlock (A-7) — all root-caused and fixed.
+  IPv6 RemoteIP now formats correctly (`::1`). Full suite 14/14, 0 leaks, Win32 + Win64.
+
 <!-- New architecture decisions are appended below. -->

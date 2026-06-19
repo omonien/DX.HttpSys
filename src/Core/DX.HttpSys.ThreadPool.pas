@@ -81,8 +81,7 @@ type
 
   TDXHttpSysReceiverThread = class(TThread)
   private
-    FPool:          TDXHttpSysWorkerPool;
-    FRequestBuffer: TBytes;
+    FPool: TDXHttpSysWorkerPool;
   protected
     procedure Execute; override;
   public
@@ -107,6 +106,9 @@ type
     FOnError:         TOnHttpSysError;
     FServerHeader:    string;
     FActive:          Boolean;
+
+    // Frees any work items still queued (so their buffers don't leak on Stop).
+    procedure DrainPendingQueue;
   public
     constructor Create(
       const AApi:        TDXHttpSysApi;
@@ -157,34 +159,73 @@ end;
 constructor TDXHttpSysReceiverThread.Create(APool: TDXHttpSysWorkerPool);
 begin
   FPool := APool;
-  SetLength(FRequestBuffer, DEFAULT_REQUEST_BUFFER_SIZE);
   FreeOnTerminate := False;
   inherited Create(False);
 end;
 
 procedure TDXHttpSysReceiverThread.Execute;
+const
+  // Upper bound for the request header buffer; a request whose headers exceed
+  // this is rejected rather than allowed to exhaust memory.
+  cMaxRequestBufferSize = 1024 * 1024; // 1 MB
 var
   Result_:    ULONG;
   BytesRecvd: ULONG;
   WorkItem:   TDXHttpSysWorkItem;
+  Buffer:     TBytes;
   ReqPtr:     PHTTP_REQUEST;
+  LRequestId: HTTP_REQUEST_ID;
 begin
   NameThreadForDebugging('DX.HttpSys.Receiver');
 
   while not Terminated do
   begin
+    // CRITICAL: each request gets its OWN buffer that HTTP.sys writes into and
+    // that is then handed to the work item by reference (no Move). HTTP_REQUEST
+    // holds absolute pointers (CookedUrl, headers, entity) into this buffer, so
+    // copying the bytes elsewhere would leave those pointers dangling into a
+    // reused buffer — which crosses requests under load. Ownership of Buffer
+    // transfers to the work item; we allocate a fresh one each iteration.
     BytesRecvd := 0;
-    ReqPtr := PHTTP_REQUEST(@FRequestBuffer[0]);
+    SetLength(Buffer, DEFAULT_REQUEST_BUFFER_SIZE);
+    ReqPtr := PHTTP_REQUEST(@Buffer[0]);
+    LRequestId := HTTP_NULL_ID; // 0 = next arbitrary request
 
-    // Blocking call - waits until a request arrives
     Result_ := FPool.Api.ReceiveHttpRequest(
       FPool.QueueHandle,
-      HTTP_NULL_ID,         // 0 = next arbitrary request
+      LRequestId,
       HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY,
       ReqPtr,
-      Length(FRequestBuffer),
+      Length(Buffer),
       @BytesRecvd,
       nil);                 // synchronous
+
+    while (Result_ = ERROR_MORE_DATA) and not Terminated do
+    begin
+      // BytesRecvd holds the required size. Grow (bounded) and retry the same
+      // request id, which ReceiveHttpRequest wrote into our buffer.
+      LRequestId := ReqPtr^.RequestId;
+      if (BytesRecvd = 0) or (BytesRecvd > cMaxRequestBufferSize) then
+      begin
+        FPool.ReportError(
+          EDXHttpSysError.CreateWin32(Result_,
+            Format('Request headers exceed %d bytes', [cMaxRequestBufferSize])),
+          'Receiver');
+        Result_ := ERROR_MORE_DATA; // signal "skip" below
+        Break;
+      end;
+
+      SetLength(Buffer, BytesRecvd);
+      ReqPtr := PHTTP_REQUEST(@Buffer[0]);
+      Result_ := FPool.Api.ReceiveHttpRequest(
+        FPool.QueueHandle,
+        LRequestId,
+        HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY,
+        ReqPtr,
+        Length(Buffer),
+        @BytesRecvd,
+        nil);
+    end;
 
     if Terminated then
       Break;
@@ -192,10 +233,11 @@ begin
     case Result_ of
       ERROR_SUCCESS:
       begin
-        // Create a work item with a copy of the buffer
+        // Hand the buffer to the work item by reference — no copy, so the
+        // HTTP_REQUEST internal pointers stay valid for the worker.
         WorkItem := TDXHttpSysWorkItem.Create;
-        SetLength(WorkItem.RequestBuffer, BytesRecvd);
-        Move(FRequestBuffer[0], WorkItem.RequestBuffer[0], BytesRecvd);
+        WorkItem.RequestBuffer := Buffer;   // ownership transfer (shared ref)
+        Buffer := nil;                      // receiver drops its reference
         WorkItem.QueueHandle := FPool.QueueHandle;
         WorkItem.RequestId   := ReqPtr^.RequestId;
 
@@ -203,18 +245,19 @@ begin
       end;
 
       ERROR_MORE_DATA:
-      begin
-        // Buffer too small - reject the request and respond with 400
-        // TODO: grow the buffer dynamically
-        FPool.ReportError(
-          Exception.Create('Request buffer too small (ERROR_MORE_DATA)'),
-          'Receiver');
-      end;
+        // Oversized request already reported above; skip it.
+        ;
 
       ERROR_CONNECTION_INVALID,
       ERROR_NETNAME_DELETED:
         // Client disconnected - ignore
         ;
+
+      ERROR_INVALID_HANDLE,
+      ERROR_OPERATION_ABORTED:
+        // The queue handle was closed (shutdown). Stop the loop instead of
+        // spinning on a dead handle while Terminate is still propagating.
+        Break;
 
     else
       if not Terminated then
@@ -256,42 +299,51 @@ begin
 
       Request  := nil;
       Response := nil;
+      // Outer guard: no failure here (even creating the request/response, or a
+      // failing Send) may ever escape and kill the worker thread. A worker that
+      // never dies removes the need to restart one.
       try
-        Request := TDXHttpSysRequest.Create(
-          FPool.Api,
-          WorkItem.QueueHandle,
-          PHTTP_REQUEST(@WorkItem.RequestBuffer[0]));
-
-        Response := TDXHttpSysResponse.Create(
-          FPool.Api,
-          WorkItem.QueueHandle,
-          WorkItem.RequestId);
-
-        // Apply the configured Server header as a default the handler may override.
-        if FPool.ServerHeader <> '' then
-          Response.Headers['server'] := FPool.ServerHeader;
-
         try
-          FPool.Handler.HandleRequest(Request, Response);
-        except
-          on E: Exception do
-          begin
-            FPool.ReportError(E, Format('HandleRequest [%s %s]',
-              [Request.Method, Request.Path]));
-            // Send 500 if not sent yet
-            if not Response.Sent then
-              Response.SendError(500);
+          Request := TDXHttpSysRequest.Create(
+            FPool.Api,
+            WorkItem.QueueHandle,
+            PHTTP_REQUEST(@WorkItem.RequestBuffer[0]));
+
+          Response := TDXHttpSysResponse.Create(
+            FPool.Api,
+            WorkItem.QueueHandle,
+            WorkItem.RequestId);
+
+          // Apply the configured Server header as a default the handler may override.
+          if FPool.ServerHeader <> '' then
+            Response.Headers['server'] := FPool.ServerHeader;
+
+          try
+            FPool.Handler.HandleRequest(Request, Response);
+          except
+            on E: Exception do
+            begin
+              FPool.ReportError(E, Format('HandleRequest [%s %s]',
+                [Request.Method, Request.Path]));
+              // Send 500 if not sent yet
+              if not Response.Sent then
+                Response.SendError(500);
+            end;
           end;
+
+          // Ensure a response is always sent
+          if not Response.Sent then
+            Response.Send;
+        finally
+          Request.Free;
+          Response.Free;
+          WorkItem.Free;
         end;
-
-        // Ensure a response is always sent
-        if not Response.Sent then
-          Response.Send;
-
-      finally
-        Request.Free;
-        Response.Free;
-        WorkItem.Free;
+      except
+        on E: Exception do
+          // Anything that slipped past the inner handling (e.g. a failed Send to
+          // an aborted client). Log and keep the worker alive for the next item.
+          FPool.ReportError(E, 'Worker');
       end;
     end;
   end;
@@ -316,9 +368,12 @@ begin
   FServerHeader := AServerHeader;
   FActive       := False;
 
-  // Capacity: 10x worker count as a reasonable buffer
+  // Capacity: 10x worker count. PopItem uses a finite (100 ms) timeout so a
+  // worker wakes periodically to observe Terminated, instead of relying on nil
+  // wake-up items — pushing those could block on a full queue during shutdown
+  // and deadlock. Push timeout stays INFINITE (the receiver applies backpressure).
   FPendingQueue := TThreadedQueue<TDXHttpSysWorkItem>.Create(
-    FWorkerCount * 10, INFINITE, INFINITE);
+    FWorkerCount * 10, INFINITE, 100);
 
   FWorkerThreads := TObjectList<TDXHttpSysWorkerThread>.Create(True);
 end;
@@ -358,27 +413,38 @@ begin
 
   FActive := False;
 
-  // Stop the receiver thread
+  // Stop the receiver thread. CloseHandle on the queue (done by the server
+  // before calling here) wakes its blocking ReceiveHttpRequest.
   if Assigned(FReceiverThread) then
   begin
     FReceiverThread.Terminate;
-    // HttpCloseRequestQueue wakes up the blocking ReceiveHttpRequest
-    // (called by TDXHttpSysServer before control reaches Stop here)
     FReceiverThread.WaitFor;
     FreeAndNil(FReceiverThread);
   end;
 
-  // Worker threads: push nil items to allow WaitFor to complete
+  // Worker threads: just signal termination. Each worker's PopItem has a finite
+  // timeout, so it observes Terminated within ~100 ms — no nil wake-up items
+  // (which could block on a full queue and deadlock under load).
   for Thread in FWorkerThreads do
-  begin
     Thread.Terminate;
-    FPendingQueue.PushItem(nil); // Wakes up a blocking PopItem
-  end;
 
   for Thread in FWorkerThreads do
     Thread.WaitFor;
 
   FWorkerThreads.Clear;
+
+  // Drain and free any work items the workers did not get to (their buffers
+  // would otherwise leak when the queue is freed).
+  DrainPendingQueue;
+end;
+
+procedure TDXHttpSysWorkerPool.DrainPendingQueue;
+var
+  LItem: TDXHttpSysWorkItem;
+begin
+  // PopItem returns wrTimeout once the queue is empty (finite pop timeout).
+  while FPendingQueue.PopItem(LItem) = wrSignaled do
+    LItem.Free;
 end;
 
 procedure TDXHttpSysWorkerPool.ReportError(
