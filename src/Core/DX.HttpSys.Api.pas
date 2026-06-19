@@ -136,6 +136,9 @@ type
     FLoaded:    Boolean;
 
     function GetProc(const AName: string): Pointer;
+    // Nils all resolved function pointers so a post-Unload call fails fast
+    // (a deterministic nil-call) instead of jumping into unmapped code.
+    procedure ClearProcs;
   public
     // Lifecycle
     Initialize:               TFnHttpInitialize;
@@ -167,8 +170,8 @@ type
     // Convenience: HttpInitialize with HTTPAPI_VERSION_2.
     function  InitializeV2(AFlags: ULONG): ULONG;
 
-    // Loads httpapi.dll and all function pointers.
-    // Returns False when the DLL cannot be found.
+    // Loads httpapi.dll and resolves all function pointers.
+    // Returns False if the DLL cannot be loaded or a critical export is missing.
     function  Load: Boolean;
 
     // Unloads the DLL. Must be called after HttpTerminate.
@@ -266,11 +269,30 @@ begin
   begin
     FreeLibrary(FLibHandle);
     FLibHandle := 0;
+    ClearProcs;
     Exit(False);
   end;
 
   FLoaded := True;
   Result  := True;
+end;
+
+procedure TDXHttpSysApi.ClearProcs;
+begin
+  @Initialize               := nil;
+  @Terminate                := nil;
+  @CreateServerSession      := nil;
+  @CloseServerSession       := nil;
+  @CreateUrlGroup           := nil;
+  @CloseUrlGroup            := nil;
+  @AddUrlToUrlGroup         := nil;
+  @RemoveUrlFromUrlGroup    := nil;
+  @CreateRequestQueue       := nil;
+  @CloseRequestQueue        := nil;
+  @SetUrlGroupProperty      := nil;
+  @ReceiveHttpRequest       := nil;
+  @ReceiveRequestEntityBody := nil;
+  @SendHttpResponse         := nil;
 end;
 
 procedure TDXHttpSysApi.Unload;
@@ -280,6 +302,7 @@ begin
     FreeLibrary(FLibHandle);
     FLibHandle := 0;
     FLoaded    := False;
+    ClearProcs;
   end;
 end;
 

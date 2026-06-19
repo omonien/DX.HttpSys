@@ -70,13 +70,17 @@ begin
   LApi := TDXHttpSysApi.Create;
   try
     Assert.IsTrue(LApi.Load);
-    Assert.IsTrue(Assigned(@LApi.Initialize),          'HttpInitialize');
-    Assert.IsTrue(Assigned(@LApi.Terminate),           'HttpTerminate');
-    Assert.IsTrue(Assigned(@LApi.CreateServerSession), 'HttpCreateServerSession');
-    Assert.IsTrue(Assigned(@LApi.CreateUrlGroup),      'HttpCreateUrlGroup');
-    Assert.IsTrue(Assigned(@LApi.CreateRequestQueue),  'HttpCreateRequestQueue');
-    Assert.IsTrue(Assigned(@LApi.ReceiveHttpRequest),  'HttpReceiveHttpRequest');
-    Assert.IsTrue(Assigned(@LApi.SendHttpResponse),    'HttpSendHttpResponse');
+    // Assigned(field) — NOT Assigned(@field): @ on a procedural field yields the
+    // field's storage address (always non-nil) and would make the check useless.
+    // A function-reference field with parameters is not invoked without arguments,
+    // so Assigned(LApi.Initialize) tests the resolved pointer value, as intended.
+    Assert.IsTrue(Assigned(LApi.Initialize),          'HttpInitialize');
+    Assert.IsTrue(Assigned(LApi.Terminate),           'HttpTerminate');
+    Assert.IsTrue(Assigned(LApi.CreateServerSession), 'HttpCreateServerSession');
+    Assert.IsTrue(Assigned(LApi.CreateUrlGroup),      'HttpCreateUrlGroup');
+    Assert.IsTrue(Assigned(LApi.CreateRequestQueue),  'HttpCreateRequestQueue');
+    Assert.IsTrue(Assigned(LApi.ReceiveHttpRequest),  'HttpReceiveHttpRequest');
+    Assert.IsTrue(Assigned(LApi.SendHttpResponse),    'HttpSendHttpResponse');
   finally
     LApi.Free;
   end;

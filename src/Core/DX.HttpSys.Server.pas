@@ -265,12 +265,15 @@ begin
       FReqQueueHandle),
     'CreateRequestQueue');
 
-  // Set queue length
-  SetQueueLength(FQueueLength);
+  // Queue length is a request-queue property and must be applied to the queue
+  // handle via HttpSetRequestQueueProperty (not the URL group). That API is wired
+  // up together with full server runtime behaviour in Phase 2; applying it here
+  // through SetUrlGroupProperty would silently no-op, so it is deliberately not
+  // attempted yet. FQueueLength is retained as configuration until then.
 
   // Bind URL group to request queue
   FillChar(BindingInfo, SizeOf(BindingInfo), 0);
-  BindingInfo.Flags              := 1; // HTTP_PROPERTY_FLAG_PRESENT
+  BindingInfo.Flags              := HTTP_PROPERTY_FLAG_PRESENT;
   BindingInfo.RequestQueueHandle := FReqQueueHandle;
   TDXHttpSysApi.CheckResult(
     FApi.SetUrlGroupProperty(
@@ -321,18 +324,20 @@ end;
 
 procedure TDXHttpSysServer.SetQueueLength(AValue: Cardinal);
 begin
+  // Live application of the queue length (HttpSetRequestQueueProperty on the
+  // queue handle, with status checking) lands in Phase 2 together with the rest
+  // of the server runtime. For now this only stores the configured value, which
+  // takes effect on the next Start. Allowing it while active would need the
+  // request-queue property API that is not wired up yet.
+  CheckNotActive('QueueLength');
   FQueueLength := AValue;
-  if FActive and (FUrlGroupId <> 0) then
-    FApi.SetUrlGroupProperty(
-      FUrlGroupId,
-      HttpServerQueueLengthProperty,
-      @FQueueLength,
-      SizeOf(FQueueLength));
 end;
 
 // --- Lifecycle ---
 
 procedure TDXHttpSysServer.Start;
+var
+  LInitialized: Boolean;
 begin
   if FActive then
     Exit;
@@ -354,12 +359,15 @@ begin
       'httpapi.dll could not be loaded');
   end;
 
-  // Initialize
-  TDXHttpSysApi.CheckResult(
-    FApi.InitializeV2(HTTP_INITIALIZE_SERVER),
-    'HttpInitialize');
-
+  // Everything from HttpInitialize onwards is guarded, so a failure at any step
+  // (including HttpInitialize itself) tears the partial startup back down.
+  LInitialized := False;
   try
+    TDXHttpSysApi.CheckResult(
+      FApi.InitializeV2(HTTP_INITIALIZE_SERVER),
+      'HttpInitialize');
+    LInitialized := True;
+
     SetupUrlGroup;
 
     // Start worker pool
@@ -371,7 +379,8 @@ begin
     FActive := True;
   except
     TeardownUrlGroup;
-    FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
+    if LInitialized then
+      FApi.Terminate(HTTP_INITIALIZE_SERVER, nil);
     FreeAndNil(FApi);
     raise;
   end;
