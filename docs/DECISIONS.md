@@ -98,9 +98,25 @@ added to the loader). Flagged by both review bots on PR #1.
 `FQueueLength` to the queue handle right after `CreateRequestQueue` in `SetupUrlGroup`
 with `CheckResult`, and allow a live update from the setter when active.
 
+### A-4 — Response header transmission strategy
+**Decision:** Header values handed to `HttpSendHttpResponse` are backed by **instance
+fields** (`FHeaderValues`, `FHeaderNames`, `FUnknownHeaders`), sized once up front, with
+the raw `PAnsiChar` pointers taken only after the final `SetLength`.
+
+**Why:** HTTP.sys reads the `HTTP_RESPONSE` struct (and the raw pointers inside it) during
+the synchronous `HttpSendHttpResponse` call. If the backing strings were locals or were
+reallocated after the pointer was taken, the kernel would read freed/moved memory. Sizing
+the arrays once and never trimming them keeps every pointer stable until Send returns.
+The unknown-header array is sized to the worst case (all headers unknown) on purpose — a
+later trim would reallocate and invalidate `pUnknownHeaders`.
+
 ## Phase status
 
-- **Phase 1 (PR #1):** Windows-only Core compiles clean (Win32+Win64), API smoke tests
-  green (6/6, 0 leaks). Self-review + both GitHub bots (Augment, Copilot) addressed.
+- **Phase 1 (PR #1, merged):** Windows-only Core compiles clean (Win32+Win64), API smoke
+  tests green (6/6, 0 leaks). Self-review + both GitHub bots (Augment, Copilot) addressed
+  over four rounds.
+- **Phase 2 (PR #2):** Server serves requests end-to-end. Response header transmission,
+  Server header pass-through, QueueLength via HttpSetRequestQueueProperty (A-3 resolved),
+  E2E integration tests (12/12, 0 leaks), and a live-verified standalone demo.
 
 <!-- New architecture decisions are appended below. -->
