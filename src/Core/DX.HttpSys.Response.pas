@@ -41,15 +41,26 @@ type
     FBody:         TMemoryStream;
     FSent:         Boolean;
 
+    // Buffers that must outlive the HttpSendHttpResponse call: the response
+    // struct holds raw pointers into these, so they are instance fields kept
+    // alive until Send returns.
+    FHeaderValues:   array of AnsiString;       // backing storage for header values
+    FHeaderNames:    array of AnsiString;       // backing storage for unknown header names
+    FUnknownHeaders: array of HTTP_UNKNOWN_HEADER;
+
     procedure SetStatusCode(AValue: Word);
     function  GetReasonPhrase: string;
     procedure SetReasonPhrase(const AValue: string);
     procedure CheckNotSent;
-    function  BuildHttpResponse(
+    // Maps a header name to its known HTTP.sys response header index, or -1 if
+    // the header is not a known response header and must travel as "unknown".
+    class function KnownResponseHeaderIndex(const AName: string): Integer; static;
+    procedure BuildHeaders(out ARawResp: HTTP_RESPONSE);
+    procedure BuildHttpResponse(
       ABodyData:   Pointer;
       ABodyLength: ULONG;
       out ARawResp: HTTP_RESPONSE;
-      out AChunk:   HTTP_DATA_CHUNK): Boolean;
+      out AChunk:   HTTP_DATA_CHUNK);
   public
     constructor Create(
       const AApi:        TDXHttpSysApi;
@@ -197,11 +208,110 @@ begin
   SetBody(AJson, 'application/json; charset=utf-8');
 end;
 
-function TDXHttpSysResponse.BuildHttpResponse(
+class function TDXHttpSysResponse.KnownResponseHeaderIndex(
+  const AName: string): Integer;
+var
+  LName: string;
+begin
+  // The known response header set (HTTP_HEADER_ID response ordinals 0..29).
+  // Names are matched case-insensitively. Anything not here travels as an
+  // unknown header, which is perfectly valid for HTTP.sys.
+  LName := AName.ToLower;
+  if LName = 'cache-control'     then Exit(Ord(HttpHeaderCacheControl));
+  if LName = 'connection'        then Exit(Ord(HttpHeaderConnection));
+  if LName = 'date'              then Exit(Ord(HttpHeaderDate));
+  if LName = 'keep-alive'        then Exit(Ord(HttpHeaderKeepAlive));
+  if LName = 'pragma'            then Exit(Ord(HttpHeaderPragma));
+  if LName = 'trailer'           then Exit(Ord(HttpHeaderTrailer));
+  if LName = 'transfer-encoding' then Exit(Ord(HttpHeaderTransferEncoding));
+  if LName = 'upgrade'           then Exit(Ord(HttpHeaderUpgrade));
+  if LName = 'via'               then Exit(Ord(HttpHeaderVia));
+  if LName = 'warning'           then Exit(Ord(HttpHeaderWarning));
+  if LName = 'allow'             then Exit(Ord(HttpHeaderAllow));
+  if LName = 'content-length'    then Exit(Ord(HttpHeaderContentLength));
+  if LName = 'content-type'      then Exit(Ord(HttpHeaderContentType));
+  if LName = 'content-encoding'  then Exit(Ord(HttpHeaderContentEncoding));
+  if LName = 'content-language'  then Exit(Ord(HttpHeaderContentLanguage));
+  if LName = 'content-location'  then Exit(Ord(HttpHeaderContentLocation));
+  if LName = 'content-md5'       then Exit(Ord(HttpHeaderContentMd5));
+  if LName = 'content-range'     then Exit(Ord(HttpHeaderContentRange));
+  if LName = 'expires'           then Exit(Ord(HttpHeaderExpires));
+  if LName = 'last-modified'     then Exit(Ord(HttpHeaderLastModified));
+  if LName = 'accept-ranges'     then Exit(Ord(HttpHeaderAcceptRanges));
+  if LName = 'age'               then Exit(Ord(HttpHeaderAge));
+  if LName = 'etag'              then Exit(Ord(HttpHeaderEtag));
+  if LName = 'location'          then Exit(Ord(HttpHeaderLocation));
+  if LName = 'proxy-authenticate' then Exit(Ord(HttpHeaderProxyAuthenticate));
+  if LName = 'retry-after'       then Exit(Ord(HttpHeaderRetryAfter));
+  if LName = 'server'            then Exit(Ord(HttpHeaderServer));
+  if LName = 'set-cookie'        then Exit(Ord(HttpHeaderSetCookie));
+  if LName = 'vary'              then Exit(Ord(HttpHeaderVary));
+  if LName = 'www-authenticate'  then Exit(Ord(HttpHeaderWwwAuthenticate));
+  Result := -1;
+end;
+
+procedure TDXHttpSysResponse.BuildHeaders(out ARawResp: HTTP_RESPONSE);
+var
+  LNames:   TArray<string>;
+  LValues:  TArray<string>;
+  I:        Integer;
+  LIndex:   Integer;
+  LUnknown: Integer;
+begin
+  // Collect the headers first (a closure cannot capture the `out` ARawResp),
+  // then write them into ARawResp and the backing buffers in a plain loop. The
+  // FHeader* fields outlive HttpSendHttpResponse, which holds raw pointers into
+  // them.
+  SetLength(LNames, 0);
+  SetLength(LValues, 0);
+  FHeaders.EnumHeaders(
+    procedure(AName, AValue: string)
+    begin
+      SetLength(LNames, Length(LNames) + 1);
+      SetLength(LValues, Length(LValues) + 1);
+      LNames[High(LNames)]   := AName;
+      LValues[High(LValues)] := AValue;
+    end);
+
+  SetLength(FHeaderValues, Length(LNames));
+  SetLength(FHeaderNames, Length(LNames));
+  SetLength(FUnknownHeaders, Length(LNames));
+  LUnknown := 0;
+
+  for I := 0 to High(LNames) do
+  begin
+    FHeaderValues[I] := AnsiString(LValues[I]);
+    LIndex := KnownResponseHeaderIndex(LNames[I]);
+    if LIndex >= 0 then
+    begin
+      ARawResp.Headers.KnownHeaders[LIndex].pRawValue :=
+        PAnsiChar(FHeaderValues[I]);
+      ARawResp.Headers.KnownHeaders[LIndex].RawValueLength :=
+        Length(FHeaderValues[I]);
+    end
+    else
+    begin
+      FHeaderNames[LUnknown] := AnsiString(LNames[I]);
+      FUnknownHeaders[LUnknown].pName          := PAnsiChar(FHeaderNames[LUnknown]);
+      FUnknownHeaders[LUnknown].NameLength     := Length(FHeaderNames[LUnknown]);
+      FUnknownHeaders[LUnknown].pRawValue      := PAnsiChar(FHeaderValues[I]);
+      FUnknownHeaders[LUnknown].RawValueLength := Length(FHeaderValues[I]);
+      Inc(LUnknown);
+    end;
+  end;
+
+  if LUnknown > 0 then
+  begin
+    ARawResp.Headers.UnknownHeaderCount := LUnknown;
+    ARawResp.Headers.pUnknownHeaders    := @FUnknownHeaders[0];
+  end;
+end;
+
+procedure TDXHttpSysResponse.BuildHttpResponse(
   ABodyData:   Pointer;
   ABodyLength: ULONG;
   out ARawResp: HTTP_RESPONSE;
-  out AChunk:   HTTP_DATA_CHUNK): Boolean;
+  out AChunk:   HTTP_DATA_CHUNK);
 begin
   FillChar(ARawResp, SizeOf(ARawResp), 0);
   ARawResp.StatusCode   := FStatusCode;
@@ -209,9 +319,7 @@ begin
   ARawResp.ReasonLength := Length(FReasonPhrase);
   ARawResp.Version      := HTTPAPI_VERSION_2;
 
-  // TODO: populate known response headers
-  // (HttpHeaderContentType, HttpHeaderServer, etc.)
-  // Milestone 2: implement full header transmission
+  BuildHeaders(ARawResp);
 
   // Body chunk
   if (ABodyData <> nil) and (ABodyLength > 0) then
@@ -223,8 +331,6 @@ begin
     ARawResp.EntityChunkCount := 1;
     ARawResp.pEntityChunks    := @AChunk;
   end;
-
-  Result := True;
 end;
 
 procedure TDXHttpSysResponse.Send;

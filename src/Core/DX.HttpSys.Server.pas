@@ -270,11 +270,18 @@ begin
       FReqQueueHandle),
     'CreateRequestQueue');
 
-  // Queue length is a request-queue property and must be applied to the queue
-  // handle via HttpSetRequestQueueProperty (not the URL group). That API is wired
-  // up together with full server runtime behaviour in Phase 2; applying it here
-  // through SetUrlGroupProperty would silently no-op, so it is deliberately not
-  // attempted yet. FQueueLength is retained as configuration until then.
+  // Apply the queue length to the request-queue handle (a request-queue
+  // property, set via HttpSetRequestQueueProperty — not the URL group).
+  if Assigned(FApi.SetRequestQueueProperty) then
+    TDXHttpSysApi.CheckResult(
+      FApi.SetRequestQueueProperty(
+        FReqQueueHandle,
+        HttpServerQueueLengthProperty,
+        @FQueueLength,
+        SizeOf(FQueueLength),
+        0,
+        nil),
+      'SetRequestQueueProperty (QueueLength)');
 
   // Bind URL group to request queue
   FillChar(BindingInfo, SizeOf(BindingInfo), 0);
@@ -329,11 +336,9 @@ end;
 
 procedure TDXHttpSysServer.SetQueueLength(AValue: Cardinal);
 begin
-  // Live application of the queue length (HttpSetRequestQueueProperty on the
-  // queue handle, with status checking) lands in Phase 2 together with the rest
-  // of the server runtime. For now this only stores the configured value, which
-  // takes effect on the next Start. Allowing it while active would need the
-  // request-queue property API that is not wired up yet.
+  // Applied to the request queue at Start via HttpSetRequestQueueProperty.
+  // A live update while active is possible in principle but not exposed yet;
+  // configure before Start.
   CheckNotActive('QueueLength');
   FQueueLength := AValue;
 end;
@@ -379,6 +384,7 @@ begin
     FWorkerPool := TDXHttpSysWorkerPool.Create(
       FApi, FReqQueueHandle, FThreadCount, FHandler);
     FWorkerPool.OnError := FOnError;
+    FWorkerPool.ServerHeader := FServerHeader;
     FWorkerPool.Start;
 
     FActive := True;

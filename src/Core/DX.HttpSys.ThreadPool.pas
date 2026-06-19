@@ -105,6 +105,7 @@ type
     FReceiverThread:  TDXHttpSysReceiverThread;
     FWorkerThreads:   TObjectList<TDXHttpSysWorkerThread>;
     FOnError:         TOnHttpSysError;
+    FServerHeader:    string;
     FActive:          Boolean;
   public
     constructor Create(
@@ -124,6 +125,10 @@ type
     property PendingQueue: TThreadedQueue<TDXHttpSysWorkItem>
                                                    read FPendingQueue;
     property Active:       Boolean                 read FActive;
+
+    // Default Server header applied to each response before the handler runs
+    // (the handler may override it). Empty means "do not set one".
+    property ServerHeader: string read FServerHeader write FServerHeader;
 
     // Optional error callback (e.g. for logging)
     property OnError:      TOnHttpSysError         read FOnError write FOnError;
@@ -259,6 +264,10 @@ begin
           FPool.Api,
           WorkItem.QueueHandle,
           WorkItem.RequestId);
+
+        // Apply the configured Server header as a default the handler may override.
+        if FPool.ServerHeader <> '' then
+          Response.Headers['server'] := FPool.ServerHeader;
 
         try
           FPool.Handler.HandleRequest(Request, Response);
