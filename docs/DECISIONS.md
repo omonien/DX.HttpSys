@@ -22,6 +22,21 @@ runs autonomously. As agreed with the user, each PR is gated by:
 
 Only after both are green is the phase merged and the next phase started.
 
+### P-3 — Review cadence per phase
+To keep the review loop productive (PR #1 took two bot rounds for 11 findings):
+1. Run a focused agent **self-review before pushing**, so the obvious issues are
+   fixed before the bots see them.
+2. The GitHub bots (Augment, Copilot) review automatically on push. Wait for **one**
+   bot round, fold in the valid findings, and reply on the PR mapping each finding to
+   its resolution.
+3. Only run a second bot round when round 1 surfaced substantive new issues.
+4. Merge when the build is clean (Win32+Win64), tests pass with no leaks, and findings
+   are addressed.
+
+Findings are judged on technical merit, not accepted blindly — a couple were
+documentation/contract mismatches, one was a real use-after-free on the partial-startup
+path, several were genuine lifecycle/leak issues.
+
 ### P-2 — GitHub repository
 The PRD (§11, Q2) targets `omonien/DX.HttpSys`. The repo is created **private** initially
 (reversible: can be made public later) so that the work can be reviewed before publication.
