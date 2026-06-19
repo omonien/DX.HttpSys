@@ -67,6 +67,7 @@
     <DCCReference Include="Test.DX.HttpSys.Server.pas" />
     <DCCReference Include="Test.DX.HttpSys.Stress.pas" />
     <DCCReference Include="Test.DX.HttpSys.WebBroker.pas" />
+    <DCCReference Include="Test.DX.HttpSys.Soak.pas" />
   </ItemGroup>
   <ProjectExtensions>
     <Borland.Personality>Delphi.Personality.12</Borland.Personality>
