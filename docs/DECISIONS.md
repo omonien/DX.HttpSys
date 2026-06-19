@@ -208,4 +208,27 @@ the registry (`MaxRequestBytes`/`MaxFieldLength`). The growth + reject logic is 
 correct defensive measure rather than a hot path, and is not unit-tested (it would require
 changing machine-wide HTTP.sys registry settings).
 
+### A-9 — WebBroker adapter dispatches via a TWebRequestHandler descendant
+**Decision:** `TWebBrokerHttpSysDispatcher` feeds requests into WebBroker through
+`TWebRequestHandler.HandleRequest`, reached via a small descendant
+(`TDXWebRequestHandlerAccess`) that re-exposes the **protected** `HandleRequest`. The
+application registers its WebModule by setting `WebRequestHandlerProc`.
+
+**Why:** `TWebRequestHandler.HandleRequest` is protected with no public interface; the same
+"descendant exposes protected method" technique is exactly what Embarcadero's own Indy and
+ISAPI WebBroker bridges use. There is no separate `WebBroker` runtime package in this Delphi
+install, so the `Web.HTTPApp` / `Web.WebReq` units link statically into the adapter BPL
+(`{$WARN IMPLICIT_IMPORT OFF}` silences the expected notice).
+
+**Known limitation:** `TWebRequest.ServerPort` returns -1 — HTTP.sys does not surface the
+port in the parsed request and `TDXHttpSysRequest` doesn't carry it. WebModules essentially
+never need it; revisit only if a real use appears (YAGNI).
+
+## Phase status (updated)
+
+- **Phase 4 (PR #4):** WebBroker adapter — full `TWebRequest`/`TWebResponse` subclasses over
+  the Core, dispatched through the standard WebBroker pipeline. Builds clean Win32 + Win64.
+  3 E2E tests (real WebModule over HTTP.sys), full suite 17/17, 0 leaks; demo 03 verified
+  live with curl.
+
 <!-- New architecture decisions are appended below. -->

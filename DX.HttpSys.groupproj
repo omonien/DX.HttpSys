@@ -19,6 +19,9 @@
     <Projects Include="demo\01.StandaloneServer\StandaloneServer.dproj">
       <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
     </Projects>
+    <Projects Include="demo\03.WebBroker\WebBrokerDemo.dproj">
+      <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
+    </Projects>
   </ItemGroup>
   <ProjectExtensions>
     <Borland.Personality>Default.Personality.12</Borland.Personality>

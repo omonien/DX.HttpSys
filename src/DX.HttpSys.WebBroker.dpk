@@ -37,6 +37,11 @@ package DX.HttpSys.WebBroker;
 {$RUNONLY}
 {$IMPLICITBUILD ON}
 
+// The WebBroker units (Web.HTTPApp / Web.WebReq) are not shipped as a separate
+// runtime package by Embarcadero, so they link statically into this BPL. That is
+// expected here; silence the resulting "implicitly imported" notice.
+{$WARN IMPLICIT_IMPORT OFF}
+
 requires
   rtl,
   DX.HttpSys.Core;
