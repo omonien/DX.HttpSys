@@ -231,4 +231,34 @@ never need it; revisit only if a real use appears (YAGNI).
   3 E2E tests (real WebModule over HTTP.sys), full suite 17/17, 0 leaks; demo 03 verified
   live with curl.
 
+### A-10 — WiRL adapter is best-effort and NOT a project dependency
+**Decision:** The WiRL adapter (`DX.HttpSys.WiRL`) is written against the published WiRL API
+but is **not built, tested, or vendored** in this repository. WiRL stays a *consumer's*
+dependency — the adapter only matters to someone who already uses WiRL.
+
+**Why (agreed with the user):** WiRL is not installed on this machine, so the adapter cannot
+be compiled or run here. Rather than vendor WiRL (a heavy dependency for a library whose
+whole selling point is "no external dependencies"), the adapter ships as best-effort source.
+
+**How this is enforced:**
+- `DX.HttpSys.WiRL.dpk`/`.dproj` exist but are **removed from `DX.HttpSys.groupproj`**, so the
+  standard build (Core + WebBroker + Tests + demos) never tries to compile against WiRL.
+- The WiRL demo (`demo/02.WiRL`) and adapter carry a header warning that they are not built
+  here.
+- The adapter is modelled on `WiRL.http.Server.Indy`: `TWiRLRequest`/`TWiRLResponse`
+  subclasses over the Core, an `IWiRLServer` holding a `TDXHttpSysServer`, and an
+  `IDXHttpSysRequestHandler` bridge that runs `IWiRLListener.HandleRequest`. The API surface
+  (3-arg `HandleRequest(context, request, response)`, the abstract getters, `SendHeaders`,
+  `TWiRLContext.Request/Response`, registry `RegisterServer<T>('HttpSys')`) was taken from the
+  delphi-blocks/WiRL source.
+
+**PR handling:** Per the user, the WiRL PR is opened but **left unmerged** until it can be
+verified on a machine with WiRL installed — its code is unverified by construction.
+
+## Phase status (updated)
+
+- **Phase 5 (PR #5, kept open):** WiRL adapter rewritten against the real WiRL API
+  (best-effort, not locally buildable). Removed from the build group; existing build stays
+  green (17/17, 0 leaks). Awaiting verification with WiRL installed before merge.
+
 <!-- New architecture decisions are appended below. -->
