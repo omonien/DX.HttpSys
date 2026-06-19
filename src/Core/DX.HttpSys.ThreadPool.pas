@@ -314,8 +314,8 @@ destructor TDXHttpSysWorkerPool.Destroy;
 begin
   if FActive then
     Stop;
-  FWorkerThreads.Free;
-  FPendingQueue.Free;
+  FreeAndNil(FWorkerThreads);
+  FreeAndNil(FPendingQueue);
   inherited;
 end;
 

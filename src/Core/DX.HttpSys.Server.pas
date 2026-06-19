@@ -157,7 +157,7 @@ destructor TDXHttpSysServer.Destroy;
 begin
   if FActive then
     Stop;
-  FUrlPrefixes.Free;
+  FreeAndNil(FUrlPrefixes);
   inherited;
 end;
 
@@ -291,8 +291,11 @@ procedure TDXHttpSysServer.TeardownUrlGroup;
 var
   Item: TDXUrlPrefix;
 begin
+  // FApi may be nil if Start failed before the API was loaded; the HTTP.sys
+  // handles are then still zero, but guard explicitly so a future caller order
+  // cannot dereference a nil API.
   // Remove URL prefixes
-  if FUrlGroupId <> 0 then
+  if Assigned(FApi) and (FUrlGroupId <> 0) then
   begin
     for Item in FUrlPrefixes do
       FApi.RemoveUrlFromUrlGroup(FUrlGroupId, PWideChar(Item.Prefix), 0);
@@ -309,7 +312,7 @@ begin
   end;
 
   // Close server session
-  if FSessionId <> 0 then
+  if Assigned(FApi) and (FSessionId <> 0) then
   begin
     FApi.CloseServerSession(FSessionId);
     FSessionId := 0;

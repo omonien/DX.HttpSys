@@ -152,8 +152,8 @@ end;
 
 destructor TDXHttpSysResponse.Destroy;
 begin
-  FHeaders.Free;
-  FBody.Free;
+  FreeAndNil(FHeaders);
+  FreeAndNil(FBody);
   inherited;
 end;
 

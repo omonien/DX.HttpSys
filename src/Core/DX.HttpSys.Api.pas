@@ -1,14 +1,15 @@
 ﻿/// <summary>
-///   DX.HttpSys.Api — runtime loader and function record for httpapi.dll v2.0.
+///   DX.HttpSys.Api — runtime loader and function table for httpapi.dll v2.0.
 /// </summary>
 /// <remarks>
 ///   All functions are resolved via GetProcAddress; there is no hard import link.
-///   The unit compiles on non-Windows platforms, where the function pointers are
-///   nil. EDXHttpSysNotSupported is raised on Load when running on non-Windows.
+///   TDXHttpSysApi is a class so an instance is always zero-initialised on Create
+///   (see docs/DECISIONS.md, A-2). This is a Windows-only library.
 ///
 ///   Usage:
-///     if not TDXHttpSysApi.Instance.Load then
-///       raise EDXHttpSysError.Create('httpapi.dll could not be loaded');
+///     LApi := TDXHttpSysApi.Create;
+///     if not LApi.Load then
+///       raise EDXHttpSysError.CreateWin32(GetLastError, 'httpapi.dll could not be loaded');
 /// </remarks>
 /// <author>Olaf Monien</author>
 /// <created>2026-06-19</created>
@@ -215,9 +216,12 @@ begin
 end;
 
 function TDXHttpSysApi.GetProc(const AName: string): Pointer;
+var
+  LAnsiName: AnsiString;
 begin
   // GetProcAddress takes an ANSI (LPCSTR) symbol name — there is no wide variant.
-  Result := GetProcAddress(FLibHandle, PAnsiChar(AnsiString(AName)));
+  LAnsiName := AnsiString(AName);
+  Result := GetProcAddress(FLibHandle, PAnsiChar(LAnsiName));
   // Missing optional functions yield nil; critical ones are checked in Load.
 end;
 
