@@ -137,6 +137,12 @@ begin
   end;
 end;
 
+procedure TearDownWebBroker;
+begin
+  Web.WebReq.WebRequestHandlerProc := nil;
+  FreeAndNil(GHandler);
+end;
+
 // Sets up the WebBroker handler with the test module, starts a server, and
 // returns it. The caller must call TearDown after.
 function StartWebBrokerServer(APort: Word): TDXHttpSysServer;
@@ -157,14 +163,10 @@ begin
     Result.Start;
   except
     Result.Free;
+    // Don't leak the global handler into later tests if startup failed.
+    TearDownWebBroker;
     raise;
   end;
-end;
-
-procedure TearDownWebBroker;
-begin
-  Web.WebReq.WebRequestHandlerProc := nil;
-  FreeAndNil(GHandler);
 end;
 
 function BaseUrl(APort: Word): string;

@@ -170,14 +170,21 @@ end;
 
 function TDXHttpSysWebRequest.GetRawContent: TBytes;
 var
-  LBody: TStream;
+  LBody:  TStream;
+  LSaved: Int64;
 begin
   LBody := FDXRequest.Body;
   if Assigned(LBody) and (LBody.Size > 0) then
   begin
-    SetLength(Result, LBody.Size);
-    LBody.Position := 0;
-    LBody.ReadBuffer(Result[0], LBody.Size);
+    // Restore the stream position so a later ReadClient/ReadString still works.
+    LSaved := LBody.Position;
+    try
+      SetLength(Result, LBody.Size);
+      LBody.Position := 0;
+      LBody.ReadBuffer(Result[0], LBody.Size);
+    finally
+      LBody.Position := LSaved;
+    end;
   end
   else
     Result := nil;
@@ -350,6 +357,7 @@ begin
 
   if ContentStream <> nil then
   begin
+    FDXResponse.Body.Clear; // don't append to anything already written
     ContentStream.Position := 0;
     FDXResponse.Body.CopyFrom(ContentStream, 0);
     FDXResponse.Headers['content-type'] := LContentType;
@@ -407,6 +415,15 @@ var
   LWebReq:  TDXHttpSysWebRequest;
   LWebResp: TDXHttpSysWebResponse;
 begin
+  // No WebModule registered (the app forgot to set WebRequestHandlerProc) —
+  // return a clear 500 instead of dereferencing a nil handler in the worker.
+  if WebRequestHandler = nil then
+  begin
+    if not AResponse.Sent then
+      AResponse.SendError(500, 'No WebBroker request handler registered');
+    Exit;
+  end;
+
   LWebReq  := nil;
   LWebResp := nil;
   try
