@@ -231,4 +231,21 @@ never need it; revisit only if a real use appears (YAGNI).
   3 E2E tests (real WebModule over HTTP.sys), full suite 17/17, 0 leaks; demo 03 verified
   live with curl.
 
+### A-11 — Soak test measures memory + handles against a warmed-up baseline
+**Decision:** The longevity test (`Test.DX.HttpSys.Soak`) runs warm-up waves first, takes a
+memory and handle-count baseline, then runs many more waves and asserts both stayed within a
+generous tolerance (8 MB working set, 64 handles).
+
+**Why:** PRD §9.6 requires proof of constant memory and handle usage under sustained load.
+The baseline is taken **after** warm-up so one-time allocator/thread-pool growth isn't
+mistaken for a leak; a real leak grows without bound and trips the tolerance, while normal
+allocator slack stays under it. The size is CI-friendly (waves × per-wave ≈ 4000 requests,
+a few seconds); the same harness scales to a multi-hour run by raising `cWaves`.
+
+## Phase status (updated)
+
+- **Phase 6 (PR #6):** Soak/longevity test added — sustained load over many request waves
+  with memory (GetProcessMemoryInfo) and handle (GetProcessHandleCount) checks. Full suite
+  18/18, 0 leaks.
+
 <!-- New architecture decisions are appended below. -->

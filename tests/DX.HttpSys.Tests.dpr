@@ -18,7 +18,8 @@ uses
   Test.DX.HttpSys.Api in 'Test.DX.HttpSys.Api.pas',
   Test.DX.HttpSys.Server in 'Test.DX.HttpSys.Server.pas',
   Test.DX.HttpSys.Stress in 'Test.DX.HttpSys.Stress.pas',
-  Test.DX.HttpSys.WebBroker in 'Test.DX.HttpSys.WebBroker.pas';
+  Test.DX.HttpSys.WebBroker in 'Test.DX.HttpSys.WebBroker.pas',
+  Test.DX.HttpSys.Soak in 'Test.DX.HttpSys.Soak.pas';
 
 var
   LRunner: ITestRunner;
