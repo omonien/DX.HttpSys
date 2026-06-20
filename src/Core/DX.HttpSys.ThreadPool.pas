@@ -159,7 +159,11 @@ type
     // Optional error callback (e.g. for logging)
     property OnError:      TOnHttpSysError         read FOnError write FOnError;
 
+    // Reports a caught exception (the caller's except block still owns it).
     procedure ReportError(const AException: Exception; const AContext: string);
+    // Reports a freshly created exception and FREES it (caller transfers
+    // ownership). Use when raising an ad-hoc error to the OnError callback.
+    procedure ReportErrorOwned(AException: Exception; const AContext: string);
   end;
 
 implementation
@@ -248,7 +252,7 @@ begin
       LRequestId := ReqPtr^.RequestId;
       if (BytesRecvd = 0) or (BytesRecvd > cMaxRequestBufferSize) then
       begin
-        FPool.ReportError(
+        FPool.ReportErrorOwned(
           EDXHttpSysError.CreateWin32(Result_,
             Format('Request headers exceed %d bytes', [cMaxRequestBufferSize])),
           'Receiver');
@@ -306,7 +310,7 @@ begin
 
     else
       if not Terminated then
-        FPool.ReportError(
+        FPool.ReportErrorOwned(
           EDXHttpSysError.CreateWin32(Result_, 'ReceiveHttpRequest'),
           'Receiver');
     end;
@@ -498,7 +502,19 @@ procedure TDXHttpSysWorkerPool.ReportError(
 begin
   if Assigned(FOnError) then
     FOnError(AException, AContext);
-  // No handler: swallow the exception silently (the worker thread keeps running)
+  // The caller's except block owns AException; nothing to free here. With no
+  // handler the error is swallowed and the worker thread keeps running.
+end;
+
+procedure TDXHttpSysWorkerPool.ReportErrorOwned(
+  AException: Exception;
+  const AContext: string);
+begin
+  try
+    ReportError(AException, AContext);
+  finally
+    AException.Free; // we own this freshly created exception
+  end;
 end;
 
 end.

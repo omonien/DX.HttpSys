@@ -1,25 +1,23 @@
 ﻿/// <summary>
-///   DX.HttpSys.WiRL — WiRL server engine backed by the kernel HTTP.sys listener,
-///   for the WiRL 4.x RELEASE API (two-argument IWiRLListener, WiRL.Core.Engine).
+///   DX.HttpSys.WiRL.REST — WiRL server engine on the kernel HTTP.sys listener,
+///   for the WiRL MASTER branch API (three-argument IWiRLListener with
+///   TWiRLContext, WiRL.Engine.REST).
 /// </summary>
 /// <remarks>
-///   Registers itself with the WiRL server registry under the name 'HttpSys', so
-///   an application swaps the Indy engine for HTTP.sys by selecting this vendor:
+///   Use this unit with the current WiRL master branch. For the WiRL 4.x RELEASE
+///   API (two-argument IWiRLListener, WiRL.Core.Engine) use DX.HttpSys.WiRL.
 ///
-///     uses DX.HttpSys.WiRL;
+///     uses DX.HttpSys.WiRL.REST;
 ///     ...
 ///     FServer := TWiRLServer.Create(nil);
-///     FServer.Port := 8080;
-///     FServer.ServerVendor := 'HttpSys';   // select this engine
+///     FServer.ServerVendor := 'HttpSys';
 ///     FServer.Active := True;
 ///
-///   For the WiRL master branch (three-argument IWiRLListener with TWiRLContext,
-///   WiRL.Engine.REST) use DX.HttpSys.WiRL.REST instead. See docs/DECISIONS.md
-///   (A-10) and the optional integration tests under tests-integration/.
-///
-///   WiRL is an external dependency that is intentionally NOT vendored here; this
-///   unit only compiles where WiRL is on the library path. Verified against WiRL
-///   v4.6.0 via the integration-test harness.
+///   WiRL is an external dependency that is intentionally NOT vendored here, so
+///   this unit only compiles where WiRL master is on the library path. The
+///   companion release adapter (DX.HttpSys.WiRL) is verified by the integration
+///   harness; this master variant tracks the same structure against the newer
+///   listener signature. See docs/DECISIONS.md (A-10) and tests-integration/.
 ///
 ///   Structure mirrors WiRL.http.Server.Indy:
 ///     TWiRLHttpRequestHttpSys  : TWiRLRequest  over TDXHttpSysRequest
@@ -28,22 +26,23 @@
 ///     TDXToWiRLBridge          : IDXHttpSysRequestHandler -> IWiRLListener
 /// </remarks>
 /// <author>Olaf Monien</author>
-/// <created>2026-06-19</created>
+/// <created>2026-06-20</created>
 /// <license>MIT</license>
-unit DX.HttpSys.WiRL;
+unit DX.HttpSys.WiRL.REST;
 
 interface
 
 uses
   System.SysUtils,
   System.Classes,
-  // WiRL (4.x release API)
+  // WiRL
   WiRL.http.Core,
   WiRL.http.Cookie,
   WiRL.http.Headers,
   WiRL.http.Request,
   WiRL.http.Response,
   WiRL.http.Server.Interfaces,
+  WiRL.Core.Context.Server,
   // DX.HttpSys Core
   DX.HttpSys.Request,
   DX.HttpSys.Response,
@@ -73,6 +72,7 @@ type
     function GetCookieFields: TWiRLCookies; override;
     function GetContentStream: TStream; override;
     procedure SetContentStream(const Value: TStream); override;
+    function GetConnection: TWiRLConnection; override;
   public
     constructor Create(ADXRequest: TDXHttpSysRequest);
     destructor Destroy; override;
@@ -97,11 +97,12 @@ type
     function GetReasonString: string; override;
     procedure SetReasonString(const Value: string); override;
     function GetHeaders: IWiRLHeaders; override;
+    function GetConnection: TWiRLConnection; override;
   public
     constructor Create(ADXResponse: TDXHttpSysResponse);
     destructor Destroy; override;
 
-    procedure SendHeaders; override;
+    procedure SendHeaders(AImmediate: Boolean); override;
 
     // Flushes status, headers and the content stream onto the DX.HttpSys
     // response and sends it. Called by the bridge after the listener returns.
@@ -163,12 +164,12 @@ begin
   begin
     LSep := AHost.IndexOf(']:');
     if LSep >= 0 then
-      Inc(LSep); // move from ']' to the following ':'
+      Inc(LSep);
   end
   else if AHost.CountChar(':') = 1 then
     LSep := AHost.IndexOf(':')
   else
-    LSep := -1; // bare IPv6 (multiple colons, no brackets) or no port at all
+    LSep := -1;
   if LSep >= 0 then
     Result := StrToIntDef(AHost.Substring(LSep + 1), 80)
   else
@@ -212,8 +213,7 @@ end;
 function TWiRLHttpRequestHttpSys.GetServerPort: Integer;
 begin
   // HTTP.sys doesn't surface the port in the parsed request; derive it from the
-  // Host header. Handle bracketed IPv6 ("[::1]:8080") by looking for "]:" first;
-  // otherwise a single ':' separates an IPv4/host name from its port.
+  // Host header (IPv6-aware).
   Result := PortFromHost(FDXRequest.Host);
 end;
 
@@ -266,6 +266,13 @@ begin
   // The request body is owned by the DX.HttpSys request; setting is a no-op.
 end;
 
+function TWiRLHttpRequestHttpSys.GetConnection: TWiRLConnection;
+begin
+  // No streaming/SSE support in this engine yet; WiRL only needs this for
+  // chunked responses, which the HTTP.sys engine does not implement.
+  Result := nil;
+end;
+
 // -----------------------------------------------------------------------------
 // TWiRLHttpResponseHttpSys
 // -----------------------------------------------------------------------------
@@ -281,8 +288,7 @@ end;
 
 destructor TWiRLHttpResponseHttpSys.Destroy;
 begin
-  // This response owns its content stream (like the Indy adapter, which hands
-  // ownership to Indy via FreeContentStream := True). Nothing else frees it.
+  // This response owns its content stream (WiRL does not free it for us).
   FreeAndNil(FContentStream);
   inherited;
 end;
@@ -294,8 +300,8 @@ end;
 
 procedure TWiRLHttpResponseHttpSys.SetContentStream(const Value: TStream);
 begin
-  // Take over the stream WiRL sets, freeing the one we created. We keep
-  // ownership so the destructor releases it — WiRL does not free it for us.
+  // Take over the stream WiRL sets, freeing the one we created; we keep
+  // ownership so the destructor releases it.
   if FContentStream <> Value then
     FreeAndNil(FContentStream);
   FContentStream := Value;
@@ -326,7 +332,12 @@ begin
   Result := FHeaders;
 end;
 
-procedure TWiRLHttpResponseHttpSys.SendHeaders;
+function TWiRLHttpResponseHttpSys.GetConnection: TWiRLConnection;
+begin
+  Result := nil;
+end;
+
+procedure TWiRLHttpResponseHttpSys.SendHeaders(AImmediate: Boolean);
 begin
   inherited;
   // Headers are flushed onto the DX.HttpSys response in Flush, after the
@@ -372,27 +383,37 @@ end;
 procedure TDXToWiRLBridge.HandleRequest(const ARequest: TDXHttpSysRequest;
   const AResponse: TDXHttpSysResponse);
 var
+  LContext:  TWiRLContext;
   LRequest:  TWiRLHttpRequestHttpSys;
   LResponse: TWiRLHttpResponseHttpSys;
 begin
-  // WiRL 4.x: IWiRLListener.HandleRequest takes (request, response) — no context.
-  LRequest := TWiRLHttpRequestHttpSys.Create(ARequest);
+  LContext := TWiRLContext.Create;
   try
-    LResponse := TWiRLHttpResponseHttpSys.Create(AResponse);
+    LRequest  := TWiRLHttpRequestHttpSys.Create(ARequest);
     try
-      if LResponse.Server = '' then
-        LResponse.Server := 'WiRL Server (DX.HttpSys)';
+      LResponse := TWiRLHttpResponseHttpSys.Create(AResponse);
+      try
+        // The context registers these as non-owning containers
+        // (ContextOwned=False), so we still free them ourselves below.
+        LContext.Request := LRequest;
+        LContext.Response := LResponse;
 
-      FListener.HandleRequest(LRequest, LResponse);
+        if LResponse.Server = '' then
+          LResponse.Server := 'WiRL Server (DX.HttpSys)';
 
-      // The listener filled the WiRL response; push it to HTTP.sys.
-      if not AResponse.Sent then
-        LResponse.Flush;
+        FListener.HandleRequest(LContext, LRequest, LResponse);
+
+        // The listener filled the WiRL response; push it to HTTP.sys.
+        if not AResponse.Sent then
+          LResponse.Flush;
+      finally
+        LResponse.Free;
+      end;
     finally
-      LResponse.Free;
+      LRequest.Free;
     end;
   finally
-    LRequest.Free;
+    LContext.Free;
   end;
 end;
 

@@ -2,7 +2,7 @@
 
 # DX.HttpSys
 
-### The native Windows kernel HTTP stack — for *any* Delphi web framework
+## The native Windows kernel HTTP stack — for *any* Delphi web framework
 
 **A standalone, framework-agnostic Delphi library that exposes the Windows kernel-mode HTTP listener ([HTTP.sys](https://learn.microsoft.com/en-us/windows/win32/http/http-api-start-page) / `httpapi.dll` v2.0) as a clean, reusable component — plus thin adapters for WiRL and WebBroker.**
 
@@ -135,19 +135,22 @@ See [`demo/03.WebBroker`](demo/03.WebBroker) for a complete, runnable example.
 
 ```pascal
 uses
-  DX.HttpSys.WiRL,   // registers the 'HttpSys' WiRL server engine
+  DX.HttpSys.WiRL,   // registers the 'HttpSys' WiRL server engine (WiRL 4.x)
   WiRL.http.Server;
 
 FServer := TWiRLServer.Create(nil);
-FServer.ServerPort := 8080;
-FServer.ServerEngine := 'HttpSys';   // use HTTP.sys instead of Indy
+FServer.Port := 8080;
+FServer.ServerVendor := 'HttpSys';   // use HTTP.sys instead of Indy
 // ... your existing WiRL engine/application configuration ...
 FServer.Active := True;
 ```
 
-> ℹ️ The WiRL adapter is written against the WiRL API but is **not built or tested in this
-> repository** — WiRL is an external dependency that is intentionally not vendored. Treat it
-> as best-effort until verified with WiRL installed (see [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10).
+> ℹ️ WiRL is an external dependency that is intentionally **not vendored**, so this adapter
+> only compiles where WiRL is on the library path. There are two adapters: `DX.HttpSys.WiRL`
+> for the WiRL 4.x release API (**verified** against WiRL v4.6.0) and `DX.HttpSys.WiRL.REST`
+> for the master branch (see [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10).
+> Optional integration tests against downloaded third-party sources live in
+> [`tests-integration/`](tests-integration/).
 
 ---
 
