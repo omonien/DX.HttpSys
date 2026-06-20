@@ -128,19 +128,30 @@ begin
 end;
 
 // Starts the provider on a background thread and waits until it is listening.
+// On a start failure, tears the thread down so a failed test leaves no stray
+// listener behind.
 function StartHorse(APort: Word): THorseListenThread;
 var
   LWaited: Integer;
 begin
   EnsureRoutes;
   Result := THorseListenThread.Create(APort);
-  LWaited := 0;
-  while (not THorseProviderHttpSys<THorse>.IsRunning) and (LWaited < 5000) do
-  begin
-    Sleep(25);
-    Inc(LWaited, 25);
+  try
+    LWaited := 0;
+    while (not THorseProviderHttpSys<THorse>.IsRunning) and (LWaited < 5000) do
+    begin
+      Sleep(25);
+      Inc(LWaited, 25);
+    end;
+    Assert.IsTrue(THorseProviderHttpSys<THorse>.IsRunning, 'server did not start');
+  except
+    if THorseProviderHttpSys<THorse>.IsRunning then
+      THorseProviderHttpSys<THorse>.StopListen;
+    Result.Terminate;
+    Result.WaitFor;
+    Result.Free;
+    raise;
   end;
-  Assert.IsTrue(THorseProviderHttpSys<THorse>.IsRunning, 'server did not start');
 end;
 
 procedure StopHorse(AThread: THorseListenThread);

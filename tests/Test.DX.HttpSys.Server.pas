@@ -316,8 +316,6 @@ var
   LServer: TDXHttpSysServer;
   LClient: THTTPClient;
   LResp:   IHTTPResponse;
-  LPath:   string;
-  LQuery:  string;
 begin
   LPort := FindFreePort;
   Assert.IsTrue(LPort > 0, 'could not find a free port');
@@ -326,19 +324,18 @@ begin
     TProcHandler.Create(
       procedure(AReq: TDXHttpSysRequest; AResp: TDXHttpSysResponse)
       begin
-        // Capture the parsed values; the handler runs on a worker thread, but
-        // the request lives only for this call so we copy out immediately.
-        LPath  := AReq.Path;
-        LQuery := AReq.QueryString;
-        AResp.SetBody('ok');
+        // Echo the parsed values back in the body so the assertion runs on the
+        // client thread with no cross-thread shared state.
+        AResp.SetBody(AReq.Path + '|' + AReq.QueryString);
       end));
   try
     LClient := THTTPClient.Create;
     try
       LResp := LClient.Get(Format('http://localhost:%d/echo?msg=ping&x=1', [LPort]));
       Assert.AreEqual(200, LResp.StatusCode, 'status');
-      Assert.AreEqual('/echo', LPath, 'Path must exclude the query string');
-      Assert.AreEqual('msg=ping&x=1', LQuery, 'QueryString must hold the query');
+      // Path must exclude the query string; QueryString must hold it.
+      Assert.AreEqual('/echo|msg=ping&x=1',
+        LResp.ContentAsString(TEncoding.UTF8), 'path|query');
     finally
       LClient.Free;
     end;
