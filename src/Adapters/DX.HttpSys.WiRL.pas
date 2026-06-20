@@ -153,6 +153,28 @@ implementation
 uses
   WiRL.http.Accept.MediaType;
 
+// Extracts the port from a Host header, IPv6-aware. Returns 80 when absent.
+// Examples: "host:8080" -> 8080; "[::1]:8080" -> 8080; "host" / "[::1]" -> 80.
+function PortFromHost(const AHost: string): Integer;
+var
+  LSep: Integer; // 0-based index of the ':' that precedes the port, or -1
+begin
+  if AHost.StartsWith('[') then
+  begin
+    LSep := AHost.IndexOf(']:');
+    if LSep >= 0 then
+      Inc(LSep); // move from ']' to the following ':'
+  end
+  else if AHost.CountChar(':') = 1 then
+    LSep := AHost.IndexOf(':')
+  else
+    LSep := -1; // bare IPv6 (multiple colons, no brackets) or no port at all
+  if LSep >= 0 then
+    Result := StrToIntDef(AHost.Substring(LSep + 1), 80)
+  else
+    Result := 80;
+end;
+
 // -----------------------------------------------------------------------------
 // TWiRLHttpRequestHttpSys
 // -----------------------------------------------------------------------------
@@ -189,8 +211,10 @@ end;
 
 function TWiRLHttpRequestHttpSys.GetServerPort: Integer;
 begin
-  // HTTP.sys doesn't surface the port in the parsed request; derive from Host.
-  Result := StrToIntDef(Copy(FDXRequest.Host, Pos(':', FDXRequest.Host) + 1, MaxInt), 80);
+  // HTTP.sys doesn't surface the port in the parsed request; derive it from the
+  // Host header. Handle bracketed IPv6 ("[::1]:8080") by looking for "]:" first;
+  // otherwise a single ':' separates an IPv4/host name from its port.
+  Result := PortFromHost(FDXRequest.Host);
 end;
 
 function TWiRLHttpRequestHttpSys.GetHeaders: IWiRLHeaders;

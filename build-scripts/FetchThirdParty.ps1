@@ -105,16 +105,20 @@ foreach ($dep in $config.dependencies) {
 
     foreach ($sp in $dep.sourcePaths) {
         $full = Join-Path $dest ($sp -replace '/', '\')
+        # A configured source path that does not exist means the manifest is wrong
+        # or the upstream layout changed — fail now rather than feed Delphi a bogus
+        # search path that produces a confusing "unit not found" later.
         if (-not (Test-Path $full)) {
-            Write-Warning "  source path not found: $full"
+            throw "Source path not found for $($dep.name): $full"
         }
         $searchPaths += $full
     }
 }
 
-# Persist the resolved search paths for the build step.
+# Persist the resolved search paths for the build step. UTF-8 so a path with
+# non-ASCII characters (e.g. an accented user-profile folder) survives.
 $searchPathsFile = Join-Path $targetRoot 'searchpaths.txt'
-$searchPaths | Set-Content -Path $searchPathsFile -Encoding ASCII
+$searchPaths | Set-Content -Path $searchPathsFile -Encoding UTF8
 
 Write-Host ""
 Write-Host "Done. Search paths written to: $searchPathsFile"

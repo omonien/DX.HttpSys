@@ -135,21 +135,22 @@ Ein vollständiges, lauffähiges Beispiel liegt unter [`demo/03.WebBroker`](demo
 
 ```pascal
 uses
-  DX.HttpSys.WiRL,   // registriert die WiRL-Server-Engine 'HttpSys'
+  DX.HttpSys.WiRL,   // registriert die WiRL-Server-Engine 'HttpSys' (WiRL 4.x)
   WiRL.http.Server;
 
 FServer := TWiRLServer.Create(nil);
-FServer.ServerPort := 8080;
-FServer.ServerEngine := 'HttpSys';   // HTTP.sys statt Indy
+FServer.Port := 8080;
+FServer.ServerVendor := 'HttpSys';   // HTTP.sys statt Indy
 // ... deine bestehende WiRL-Engine-/Application-Konfiguration ...
 FServer.Active := True;
 ```
 
-> ℹ️ Der WiRL-Adapter ist gegen die WiRL-API geschrieben, wird aber **in diesem Repository
-> nicht gebaut oder getestet** — WiRL ist eine externe Abhängigkeit, die bewusst nicht
-> mitgeliefert wird. Behandle ihn als Best-Effort, bis er mit installiertem WiRL verifiziert
-> ist (siehe [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10). Optionale Integrationstests gegen
-> heruntergeladene 3rd-Party-Quellen liegen unter [`tests-integration/`](tests-integration/).
+> ℹ️ WiRL ist eine externe Abhängigkeit, die bewusst **nicht mitgeliefert** wird, daher
+> kompiliert dieser Adapter nur, wenn WiRL im Suchpfad liegt. Es gibt zwei Adapter:
+> `DX.HttpSys.WiRL` für die WiRL-4.x-Release-API (gegen WiRL v4.6.0 **verifiziert**) und
+> `DX.HttpSys.WiRL.REST` für den master-Branch. Optionale Integrationstests laden die
+> nötigen Quellen herunter — siehe [`tests-integration/`](tests-integration/) und
+> [`docs/DECISIONS.md`](docs/DECISIONS.md) (A-10).
 
 ---
 
