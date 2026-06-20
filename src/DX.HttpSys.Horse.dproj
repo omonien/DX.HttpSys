@@ -1,38 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build" ToolsVersion="4.0">
   <PropertyGroup>
-    <ProjectGuid>{E140C599-4DAA-4A87-9682-EB64E547E183}</ProjectGuid>
+    <ProjectGuid>{170A3E0B-F5C3-4DB5-82BD-17A43B62DFF7}</ProjectGuid>
     <ProjectVersion>19.5</ProjectVersion>
     <FrameworkType>None</FrameworkType>
-    <MainSource>DX.HttpSys.IntegrationTests.dpr</MainSource>
+    <MainSource>DX.HttpSys.Horse.dpk</MainSource>
     <Base>true</Base>
     <Config Condition="'$(Config)'==''">Debug</Config>
     <Platform Condition="'$(Platform)'==''">Win32</Platform>
     <TargetedPlatforms>3</TargetedPlatforms>
-    <AppType>Console</AppType>
+    <AppType>Package</AppType>
   </PropertyGroup>
   <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Base)'=='true') or '$(Base_Win32)'!=''">
+    <DCC_BplOutput>..\build\$(Platform)\$(Config)</DCC_BplOutput>
+    <DCC_DcpOutput>..\build\$(Platform)\$(Config)\dcu</DCC_DcpOutput>
     <DCC_DcuOutput>..\build\$(Platform)\$(Config)\dcu</DCC_DcuOutput>
     <DCC_ExeOutput>..\build\$(Platform)\$(Config)</DCC_ExeOutput>
     <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-    <!-- $(ThirdPartyPaths) is injected by BuildIntegrationTests.ps1 and holds the
-         WiRL (and future) source paths downloaded into build/thirdparty/. -->
-    <DCC_UnitSearchPath>..\libs\DUnitX\Source;..\src\Core;..\src\Adapters;$(ThirdPartyPaths);$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-    <SanitizedProjectName>DX.HttpSys.IntegrationTests</SanitizedProjectName>
+    <SanitizedProjectName>DX.HttpSys.Horse</SanitizedProjectName>
     <VerInfo_AutoIncBuild>false</VerInfo_AutoIncBuild>
     <VerInfo_Build>0</VerInfo_Build>
     <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
-    <VerInfo_Keys>FileVersion=1.0.0.0;ProductVersion=1.0.0.0;CompanyName=Olaf Monien;ProductName=DX.HttpSys;FileDescription=DX.HttpSys third-party integration tests;InternalName=DX.HttpSys.IntegrationTests;LegalCopyright=Copyright © 2026 Olaf Monien (Developer Experts LLC);LegalTrademarks=;OriginalFilename=DX.HttpSys.IntegrationTests.exe;Comments=MIT License</VerInfo_Keys>
+    <VerInfo_Keys>FileVersion=1.0.0.0;ProductVersion=1.0.0.0;CompanyName=Olaf Monien;ProductName=DX.HttpSys;FileDescription=DX.HttpSys Horse adapter;InternalName=DX.HttpSys.Horse;LegalCopyright=Copyright © 2026 Olaf Monien (Developer Experts LLC);LegalTrademarks=;OriginalFilename=DX.HttpSys.Horse.bpl;Comments=MIT License</VerInfo_Keys>
     <VerInfo_MajorVer>1</VerInfo_MajorVer>
     <VerInfo_MinorVer>0</VerInfo_MinorVer>
     <VerInfo_Release>0</VerInfo_Release>
+    <DCC_Description>DX.HttpSys Horse adapter</DCC_Description>
+    <VerInfo_DLL>true</VerInfo_DLL>
     <VerInfo_Locale>1031</VerInfo_Locale>
   </PropertyGroup>
   <PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Base)'=='true') or '$(Base_Win64)'!=''">
+    <DCC_BplOutput>..\build\$(Platform)\$(Config)</DCC_BplOutput>
+    <DCC_DcpOutput>..\build\$(Platform)\$(Config)\dcu</DCC_DcpOutput>
     <DCC_DcuOutput>..\build\$(Platform)\$(Config)\dcu</DCC_DcuOutput>
     <DCC_ExeOutput>..\build\$(Platform)\$(Config)</DCC_ExeOutput>
     <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-    <DCC_UnitSearchPath>..\libs\DUnitX\Source;..\src\Core;..\src\Adapters;$(ThirdPartyPaths);$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Cfg_1)'!=''">
     <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
@@ -65,17 +67,45 @@
     <DelphiCompile Include="$(MainSource)">
       <MainSource>MainSource</MainSource>
     </DelphiCompile>
-    <DCCReference Include="Test.DX.HttpSys.WiRL.pas" />
-    <DCCReference Include="Test.DX.HttpSys.Horse.pas" />
+    <DCCReference Include="Adapters\DX.HttpSys.Horse.pas" />
+    <DCCReference Include="DX.HttpSys.Core.dcp" />
+    <DCCReference Include="DX.HttpSys.WebBroker.dcp" />
   </ItemGroup>
   <ProjectExtensions>
     <Borland.Personality>Delphi.Personality.12</Borland.Personality>
-    <Borland.ProjectType>Application</Borland.ProjectType>
+    <Borland.ProjectType>Package</Borland.ProjectType>
     <BorlandProject>
       <Delphi.Personality>
         <Source>
-          <Source Name="MainSource">DX.HttpSys.IntegrationTests.dpr</Source>
+          <Source Name="MainSource">DX.HttpSys.Horse.dpk</Source>
         </Source>
+        <VersionInfo>
+          <VersionInfo Name="IncludeVerInfo">True</VersionInfo>
+          <VersionInfo Name="AutoIncBuild">False</VersionInfo>
+          <VersionInfo Name="MajorVer">1</VersionInfo>
+          <VersionInfo Name="MinorVer">0</VersionInfo>
+          <VersionInfo Name="Release">0</VersionInfo>
+          <VersionInfo Name="Build">0</VersionInfo>
+          <VersionInfo Name="Debug">False</VersionInfo>
+          <VersionInfo Name="PreRelease">False</VersionInfo>
+          <VersionInfo Name="Special">False</VersionInfo>
+          <VersionInfo Name="Private">False</VersionInfo>
+          <VersionInfo Name="DLL">True</VersionInfo>
+          <VersionInfo Name="Locale">1031</VersionInfo>
+          <VersionInfo Name="CodePage">1252</VersionInfo>
+        </VersionInfo>
+        <VersionInfoKeys>
+          <VersionInfoKeys Name="CompanyName">Olaf Monien</VersionInfoKeys>
+          <VersionInfoKeys Name="FileDescription">DX.HttpSys Horse adapter</VersionInfoKeys>
+          <VersionInfoKeys Name="FileVersion">1.0.0.0</VersionInfoKeys>
+          <VersionInfoKeys Name="InternalName">DX.HttpSys.Horse</VersionInfoKeys>
+          <VersionInfoKeys Name="LegalCopyright">Copyright © 2026 Olaf Monien (Developer Experts LLC)</VersionInfoKeys>
+          <VersionInfoKeys Name="LegalTrademarks" />
+          <VersionInfoKeys Name="OriginalFilename">DX.HttpSys.Horse.bpl</VersionInfoKeys>
+          <VersionInfoKeys Name="ProductName">DX.HttpSys</VersionInfoKeys>
+          <VersionInfoKeys Name="ProductVersion">1.0.0.0</VersionInfoKeys>
+          <VersionInfoKeys Name="Comments">MIT License</VersionInfoKeys>
+        </VersionInfoKeys>
       </Delphi.Personality>
       <Platforms>
         <Platform value="Win32">True</Platform>

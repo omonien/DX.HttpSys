@@ -1,8 +1,8 @@
 # Third-party integration tests (optional)
 
 These tests exercise the DX.HttpSys **adapters that target external frameworks** —
-currently **WiRL** — end to end: a real framework resource served over the kernel
-HTTP.sys engine.
+currently **WiRL** and **Horse** — end to end: a real framework resource served over
+the kernel HTTP.sys engine.
 
 > WiRL ships **two** adapters because its `IWiRLListener` signature changed across
 > versions: `DX.HttpSys.WiRL` for the 4.x release API (verified here against WiRL
@@ -44,6 +44,8 @@ needed.
 
 ## Adding another wrapper
 
-When DX.HttpSys gains another adapter (Horse, mORMot, …), add the dependency to
+When DX.HttpSys gains another adapter (mORMot, …), add the dependency to
 `thirdparty.manifest.json` and a `Test.*.pas` fixture here — no submodule, no
-change to the standard build.
+change to the standard build. If the upstream `src` ships a file that shadows an
+RTL unit (as Horse does with `Web.WebConst.pas`), list it under `excludeFiles` in
+the manifest entry — `FetchThirdParty.ps1` removes it after cloning.

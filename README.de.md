@@ -64,8 +64,9 @@ Sauberes Drei-Schichten-Design — der Kern sieht nie ein Framework, das Framewo
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  LAYER 3 — Framework-Adapter                                │
-│  DX.HttpSys.WiRL.pas        DX.HttpSys.WebBroker.pas         │
-│  TWiRLHttpSysServer         TWebBrokerHttpSysDispatcher      │
+│  DX.HttpSys.WiRL.pas   DX.HttpSys.WebBroker.pas             │
+│  DX.HttpSys.Horse.pas  (Horse-Provider über WebBroker)      │
+│  TWiRLHttpSysServer    TWebBrokerHttpSysDispatcher          │
 └───────────────────────────┬─────────────────────────────────┘
                             │ nutzt
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -151,6 +152,28 @@ FServer.Active := True;
 > `DX.HttpSys.WiRL.REST` für den master-Branch. Optionale Integrationstests laden die
 > nötigen Quellen herunter — siehe [`tests-integration/`](tests-integration/) und
 > [`docs/DECISIONS.md`](docs/DECISIONS.md) (A-10).
+
+### Horse — deine Horse-App auf HTTP.sys betreiben
+
+```pascal
+uses
+  Horse,
+  DX.HttpSys.Horse;   // ein Horse-Provider auf Basis von HTTP.sys
+
+THorse.Get('/ping',
+  procedure(AReq: THorseRequest; ARes: THorseResponse; ANext: TProc)
+  begin
+    ARes.Send('pong');
+  end);
+
+// Über diesen Provider statt Horses Standard-Indy-Provider starten:
+THorseProviderHttpSys<THorse>.Listen(9000);
+```
+
+> ℹ️ Routen wie gewohnt mit `THorse` definieren; nur der `Listen`-Aufruf ändert sich. Horse
+> basiert auf WebBroker, daher ist dieser Adapter ein dünner Provider über
+> `TWebBrokerHttpSysDispatcher`. Horse wird nicht mitgeliefert — gegen Horse v2.0.14 über die
+> Integrationstests verifiziert. Siehe [`demo/04.Horse`](demo/04.Horse).
 
 ---
 

@@ -128,6 +128,17 @@ implementation
 uses
   System.StrUtils;
 
+// Builds an AnsiString from a HTTP.sys buffer pointer using its byte length.
+// HTTP.sys does not null-terminate the Verb/header value pointers (they index
+// into the shared request buffer), so the length is authoritative. ANSI: one
+// byte per character.
+function AnsiStringFromBuffer(ABuffer: PAnsiChar; ALength: USHORT): AnsiString;
+begin
+  if (ABuffer = nil) or (ALength = 0) then
+    Exit('');
+  SetString(Result, ABuffer, ALength);
+end;
+
 // -----------------------------------------------------------------------------
 // TDXHttpHeaders
 // -----------------------------------------------------------------------------
@@ -212,27 +223,36 @@ begin
   if R^.Verb in [Low(HTTP_VERB)..High(HTTP_VERB)] then
   begin
     if R^.Verb = HttpVerbUnknown then
-      FMethod := string(AnsiString(R^.pUnknownVerb))
+      // pUnknownVerb, like the cooked-URL and header pointers, is not
+      // null-terminated; slice it with its length (ANSI: bytes = chars).
+      FMethod := string(AnsiStringFromBuffer(R^.pUnknownVerb, R^.UnknownVerbLength))
     else
       FMethod := HTTP_VERB_STRINGS[R^.Verb];
   end
   else
     FMethod := '';
 
-  // URL parts – ALWAYS use CookedUrl
+  // URL parts – ALWAYS use CookedUrl. The Host/AbsPath/QueryString pointers all
+  // index into the same buffer as pFullUrl and are NOT individually
+  // null-terminated at their end (pAbsPath runs straight into "?query"), so each
+  // MUST be sliced with its *Length field. The lengths are in bytes; two bytes
+  // per WideChar. pFullUrl alone is null-terminated, so it can be cast directly.
   if R^.CookedUrl.pFullUrl <> nil then
     FUrl := string(R^.CookedUrl.pFullUrl);
   if R^.CookedUrl.pAbsPath <> nil then
-    FPath := string(R^.CookedUrl.pAbsPath);
+    SetString(FPath, R^.CookedUrl.pAbsPath,
+      R^.CookedUrl.AbsPathLength div SizeOf(WideChar));
   if R^.CookedUrl.pQueryString <> nil then
   begin
-    FQueryString := string(R^.CookedUrl.pQueryString);
+    SetString(FQueryString, R^.CookedUrl.pQueryString,
+      R^.CookedUrl.QueryStringLength div SizeOf(WideChar));
     // Strip leading '?'
     if FQueryString.StartsWith('?') then
       FQueryString := FQueryString.Substring(1);
   end;
   if R^.CookedUrl.pHost <> nil then
-    FHost := string(R^.CookedUrl.pHost);
+    SetString(FHost, R^.CookedUrl.pHost,
+      R^.CookedUrl.HostLength div SizeOf(WideChar));
 
   // Remote IP
   if R^.Address.pRemoteAddress <> nil then
@@ -249,7 +269,8 @@ procedure TDXHttpSysRequest.ParseKnownHeaders;
   begin
     H := FRawRequest^.Headers.KnownHeaders[AIndex];
     if (H.RawValueLength > 0) and (H.pRawValue <> nil) then
-      FHeaders.SetHeader(AName, string(AnsiString(H.pRawValue)));
+      FHeaders.SetHeader(AName,
+        string(AnsiStringFromBuffer(H.pRawValue, H.RawValueLength)));
   end;
 
 var
@@ -286,8 +307,8 @@ begin
         and (UH^.RawValueLength > 0) and (UH^.pRawValue <> nil) then
       begin
         FHeaders.SetHeader(
-          string(AnsiString(UH^.pName)),
-          string(AnsiString(UH^.pRawValue)));
+          string(AnsiStringFromBuffer(UH^.pName, UH^.NameLength)),
+          string(AnsiStringFromBuffer(UH^.pRawValue, UH^.RawValueLength)));
       end;
       Inc(UH);
     end;

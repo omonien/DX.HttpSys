@@ -271,6 +271,47 @@ ownership explicitly so a swallowed error is always freed.
 it (the Indy adapter hands ownership to Indy via `FreeContentStream := True`). The original
 "WiRL owns it" assumption leaked the stream WiRL set. Verified leak-free by the integration tests.
 
+### A-15 — Horse adapter is a thin provider over the WebBroker dispatcher
+**Decision:** The Horse adapter (`DX.HttpSys.Horse`) is a `THorseProviderHttpSys<T>`
+deriving from `THorseProviderAbstract<T>`. Horse dispatches every request through
+WebBroker (`THorseWebModule` over `TWebRequest`/`TWebResponse`), so the provider does
+not bridge requests itself: `InternalListen` sets
+`WebRequestHandler.WebModuleClass := WebModuleClass` and runs a `TDXHttpSysServer`
+whose handler is the **already-verified** `TWebBrokerHttpSysDispatcher`. Routes
+registered via `THorse.Get/Use` and this provider share the same `THorseCore`
+singleton, so a user keeps writing normal Horse code and only swaps the `Listen` call.
+
+Horse is fetched on demand like WiRL (A-10): manifest entry pinned to **v2.0.14**,
+plus a `tests-integration/` fixture — no submodule. The manifest entry carries an
+`excludeFiles` list dropping Horse's bundled `Web.WebConst.pas` (an FPC compat shim
+that, on the Delphi search path, shadows the RTL unit and breaks resolution of the
+RTL `Web.*` units). `FetchThirdParty.ps1` honours `excludeFiles` on every run.
+
+**Why a provider, not an engine:** Horse has no runtime server-registration hook
+(the active server is chosen at compile time by `{$IFDEF}` in `Horse.pas`). The
+clean external integration point is therefore a provider class the user calls
+directly, not an injection into `THorse`.
+
+### A-16 — Cooked URL pointers must be sliced by length, not cast as strings
+**Decision:** `TDXHttpSysRequest.ParseFromRaw` slices `pAbsPath`, `pHost` and
+`pQueryString` from `HTTP_COOKED_URL` with `SetString` using the matching
+`*Length` field (bytes ÷ `SizeOf(WideChar)`), not `string(PWideChar)`.
+
+**Why (found by the Horse integration test):** these three pointers index into the
+same buffer as `pFullUrl` and are **not** individually null-terminated — `pAbsPath`
+runs straight into `"?query"`. The old `string(pAbsPath)` cast read to the next `#0`
+and so leaked the query string into `Path`. WebBroker (and thus Horse) routes on
+`PathInfo` = `Path`, so `GET /echo?x=1` became the un-routable token `echo?x=1`
+→ 404. WiRL masked it (it parses query separately and matched anyway); Horse, which
+routes purely on the path tokens, exposed it. This is a Core bug affecting every
+consumer; a regression test (`RequestWithQuery_SplitsPathAndQuery`) now guards it
+in the standard suite.
+
+The same non-null-terminated hazard applies to the ANSI buffer pointers
+(`pUnknownVerb`, known/unknown header `pName`/`pRawValue`); those are now sliced
+through a shared `AnsiStringFromBuffer(ptr, length)` helper rather than cast as
+null-terminated strings, closing the whole class rather than just the path case.
+
 <!-- New architecture decisions are appended below. -->
 
 ---

@@ -103,6 +103,19 @@ foreach ($dep in $config.dependencies) {
         }
     }
 
+    # Optional: remove files that must not be on the Delphi search path (e.g. an
+    # upstream FPC shim that shadows an RTL unit). Re-applied even on a cached
+    # clone so the exclusion survives across runs.
+    if ($dep.excludeFiles) {
+        foreach ($ex in $dep.excludeFiles) {
+            $exPath = Join-Path $dest ($ex -replace '/', '\')
+            if (Test-Path $exPath) {
+                Remove-Item -Force $exPath
+                Write-Host "  excluded: $ex"
+            }
+        }
+    }
+
     foreach ($sp in $dep.sourcePaths) {
         $full = Join-Path $dest ($sp -replace '/', '\')
         # A configured source path that does not exist means the manifest is wrong
