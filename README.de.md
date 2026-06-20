@@ -2,14 +2,14 @@
 
 # DX.HttpSys
 
-### Der native Windows-Kernel-HTTP-Stack — für *jedes* Delphi-Webframework
+## Der native Windows-Kernel-HTTP-Stack — für *jedes* Delphi-Webframework
 
 **Eine eigenständige, framework-neutrale Delphi-Bibliothek, die den Kernel-Mode-HTTP-Listener von Windows ([HTTP.sys](https://learn.microsoft.com/en-us/windows/win32/http/http-api-start-page) / `httpapi.dll` v2.0) als saubere, wiederverwendbare Komponente bereitstellt — plus dünne Adapter für WiRL und WebBroker.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Delphi 11.3+](https://img.shields.io/badge/Delphi-11.3%2B-E62431.svg?logo=delphi&logoColor=white)](https://www.embarcadero.com/products/delphi)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%20x86%20%7C%20x64-0078D6.svg?logo=windows&logoColor=white)](#voraussetzungen)
-[![Status: In Entwicklung](https://img.shields.io/badge/Status-In%20Entwicklung-orange.svg)](#roadmap)
+[![Status: Core fertig](https://img.shields.io/badge/Status-Core%20fertig%20%C2%B7%20getestet-brightgreen.svg)](#roadmap)
 [![Keine externen Abhängigkeiten](https://img.shields.io/badge/Abh%C3%A4ngigkeiten-keine-brightgreen.svg)](#warum-httpsys)
 
 [English](README.md) · **Deutsch**
@@ -95,7 +95,8 @@ end;
 
 ## Schnellstart
 
-> ⚠️ **In Arbeit.** Die API unten ist das Zieldesign aus dem [PRD](docs/PRD.md). Der Code entsteht entlang der [Roadmap](#roadmap).
+> Der Core und der WebBroker-Adapter sind implementiert und getestet. Die folgenden Snippets
+> zeigen die echte API; lauffähige Beispiele liegen unter [`demo/`](demo/).
 
 ### Standalone (nur Core, kein Framework)
 
@@ -115,18 +116,40 @@ begin
 end;
 ```
 
-### WiRL — Indy gegen HTTP.sys tauschen, eine Zeile
+### WebBroker — dein WebModule auf HTTP.sys
 
 ```pascal
 uses
-  DX.HttpSys.WiRL,   // <-- statt WiRL.http.Server.Indy
+  DX.HttpSys.Server, DX.HttpSys.WebBroker, Web.WebReq;
+
+// WebModule wie gewohnt bei WebBroker registrieren, dann auf HTTP.sys hosten:
+Server := TDXHttpSysServer.Create;
+Server.Handler := TWebBrokerHttpSysDispatcher.Create;
+Server.AddUrlPrefix('http://localhost:8080/');
+Server.Start;
+```
+
+Ein vollständiges, lauffähiges Beispiel liegt unter [`demo/03.WebBroker`](demo/03.WebBroker).
+
+### WiRL — die HTTP.sys-Engine auswählen
+
+```pascal
+uses
+  DX.HttpSys.WiRL,   // registriert die WiRL-Server-Engine 'HttpSys'
   WiRL.http.Server;
 
 FServer := TWiRLServer.Create(nil);
 FServer.ServerPort := 8080;
-// ... deine bestehende WiRL-Engine-Konfiguration ...
+FServer.ServerEngine := 'HttpSys';   // HTTP.sys statt Indy
+// ... deine bestehende WiRL-Engine-/Application-Konfiguration ...
 FServer.Active := True;
 ```
+
+> ℹ️ Der WiRL-Adapter ist gegen die WiRL-API geschrieben, wird aber **in diesem Repository
+> nicht gebaut oder getestet** — WiRL ist eine externe Abhängigkeit, die bewusst nicht
+> mitgeliefert wird. Behandle ihn als Best-Effort, bis er mit installiertem WiRL verifiziert
+> ist (siehe [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10). Optionale Integrationstests gegen
+> heruntergeladene 3rd-Party-Quellen liegen unter [`tests-integration/`](tests-integration/).
 
 ---
 
@@ -175,15 +198,23 @@ Im Delphi-Ökosystem gibt es bislang **keine eigenständige, quelloffene HTTP.sy
 
 ## Roadmap
 
-- [ ] **M1 — API-Fundament:** WinAPI-Strukturen, `GetProcAddress`-Loader, Smoke-Test
-- [ ] **M2 — Core-Server (Single-Threaded):** Request/Response/Server, Hello-World-Demo
-- [ ] **M3 — Threading:** Receiver- + Worker-Thread-Pool, Last-Test
-- [ ] **M4 — WiRL-Adapter:** REST-Resource via HTTP.sys
-- [ ] **M5 — WebBroker-Adapter:** WebModule via HTTP.sys
-- [ ] **M6 — Test-Suite & Härtung:** DUnitX, Integration, Stress/Soak, Leak-Checks, Performance-Baseline
-- [ ] **M7 — Packaging & Doku:** Delphi-Packages, vollständige README, XML-Doku-Kommentare
+- [x] **M1 — API-Fundament:** WinAPI-Strukturen, `GetProcAddress`-Loader, Smoke-Tests
+- [x] **M2 — Core-Server:** Request/Response/Server, Header-Übertragung, Hello-World-Demo
+- [x] **M3 — Threading:** Receiver- + Worker-Thread-Pool, Concurrency-/Stress-Harness
+- [ ] **M4 — WiRL-Adapter:** gegen die WiRL-API geschrieben, hier aber *nicht gebaut/getestet* —
+      WiRL ist eine externe Abhängigkeit, die bewusst nicht mitgeliefert wird; der Adapter wird
+      als Best-Effort-Quelle ausgeliefert (siehe [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10).
+      Optionale Integrationstests dafür liegen unter [`tests-integration/`](tests-integration/)
+- [x] **M5 — WebBroker-Adapter:** echtes WebModule via HTTP.sys, mit E2E-Tests + Demo
+- [x] **M6 — Test-Suite & Härtung:** DUnitX Unit + Integration + Concurrency-Stress + Soak
+      sowie Leak-/Handle-Checks (18 Tests, 0 Leaks)
+- [x] **M7 — Packaging & Doku:** Delphi-Packages, CI-Workflow, README, XML-Doku-Kommentare
 
-Das vollständige Design steht im [Product Requirements Document](docs/PRD.md).
+Der Core und der WebBroker-Adapter sind implementiert, bauen sauber unter Win32 + Win64 und
+sind durch eine grüne Test-Suite abgedeckt. Der WiRL-Adapter wartet auf die Verifikation auf
+einer Maschine mit installiertem WiRL. Das vollständige Design steht im
+[Product Requirements Document](docs/PRD.md), die Architekturentscheidungen in
+[`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ---
 

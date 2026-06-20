@@ -230,6 +230,47 @@ failing the job on any test failure or leak. The HTTP.sys integration/stress/soa
 to `localhost`, so the runner needs no admin rights or URL ACL. The WiRL adapter is excluded
 (A-10).
 
+### A-10 — WiRL is a consumer dependency, fetched on demand; two adapters by API era
+**Decision:** WiRL (and any future wrapped framework) is **never vendored or submoduled**.
+Its source is fetched on demand by `build-scripts/FetchThirdParty.ps1` (driven by
+`thirdparty.manifest.json`) into the git-ignored `build/thirdparty/`, and only the **optional**
+integration tests in `tests-integration/` build against it. A plain clone of DX.HttpSys pulls
+nothing extra.
+
+Because WiRL's `IWiRLListener` signature changed across versions, there are **two adapters**:
+- `DX.HttpSys.WiRL` — the WiRL **4.x release** API: two-arg `HandleRequest(request, response)`,
+  `WiRL.Core.Engine`. **Verified** against WiRL v4.6.0 by the integration harness (2/2, 0 leaks).
+- `DX.HttpSys.WiRL.REST` — the WiRL **master** API: three-arg `HandleRequest(context, request,
+  response)`, `WiRL.Engine.REST`. Same structure against the newer signature; best-effort
+  until pinned and run against a master snapshot.
+
+A consumer uses exactly one, matching their WiRL version, and selects the engine with
+`TWiRLServer.ServerVendor := 'HttpSys'`.
+
+**How to apply (adding a wrapper or a transitive dep):** append an entry to the manifest
+(name, repo, ref, sourcePaths) and a `Test.*.pas` fixture — no submodule, no change to the
+standard build. WiRL's own transitive deps (delphi-jose-jwt, delphi-neon) are manifest entries.
+
+### A-13 — ReportError must not leak freshly-created exceptions
+**Decision:** `TDXHttpSysWorkerPool` has two error-reporting entry points: `ReportError` (the
+caller's `except` block still owns the exception) and `ReportErrorOwned` (the caller hands over
+a freshly-created exception, which the pool frees).
+
+**Why (found by the WiRL integration soak):** the receiver thread reported ad-hoc errors by
+passing `EDXHttpSysError.CreateWin32(...)` straight to `ReportError`, which — with no `OnError`
+handler — swallowed the exception **without freeing it**. Under repeated server start/stop
+(three WiRL tests back to back) a shutdown-race error leaked an `EDXHttpSysError`. This is a
+real Core bug, not WiRL-specific; the integration harness simply surfaced it. The fix splits
+ownership explicitly so a swallowed error is always freed.
+
+### A-14 — WiRL response owns its content stream
+**Decision:** `TWiRLHttpResponseHttpSys` owns its content stream and frees it in the destructor;
+`SetContentStream` takes over (and frees the previous) so ownership stays with the response.
+
+**Why:** WiRL writes the response body into the response's `ContentStream` and does **not** free
+it (the Indy adapter hands ownership to Indy via `FreeContentStream := True`). The original
+"WiRL owns it" assumption leaked the stream WiRL set. Verified leak-free by the integration tests.
+
 <!-- New architecture decisions are appended below. -->
 
 ---

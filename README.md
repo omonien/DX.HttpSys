@@ -2,7 +2,7 @@
 
 # DX.HttpSys
 
-### The native Windows kernel HTTP stack — for *any* Delphi web framework
+## The native Windows kernel HTTP stack — for *any* Delphi web framework
 
 **A standalone, framework-agnostic Delphi library that exposes the Windows kernel-mode HTTP listener ([HTTP.sys](https://learn.microsoft.com/en-us/windows/win32/http/http-api-start-page) / `httpapi.dll` v2.0) as a clean, reusable component — plus thin adapters for WiRL and WebBroker.**
 
@@ -148,6 +148,8 @@ FServer.Active := True;
 > ℹ️ The WiRL adapter is written against the WiRL API but is **not built or tested in this
 > repository** — WiRL is an external dependency that is intentionally not vendored. Treat it
 > as best-effort until verified with WiRL installed (see [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10).
+> Optional integration tests against downloaded third-party sources live in
+> [`tests-integration/`](tests-integration/).
 
 ---
 

@@ -1,0 +1,44 @@
+{
+  "$comment": [
+    "Third-party dependencies used ONLY by the optional integration tests under",
+    "tests-integration/. These are NOT submodules and are NOT part of a normal",
+    "clone or build of DX.HttpSys. FetchThirdParty.ps1 reads this manifest and",
+    "shallow-clones each repo into build/thirdparty/<name> (git-ignored).",
+    "",
+    "Add a future wrapper's dependency (Horse, mORMot, ...) by appending an entry:",
+    "  name        - folder name under build/thirdparty/",
+    "  repo        - git URL to clone (https)",
+    "  ref         - branch or tag to check out (shallow)",
+    "  sourcePaths - paths (relative to the clone root) to add to the Delphi unit",
+    "                search path when building the integration tests"
+  ],
+  "dependencies": [
+    {
+      "name": "WiRL",
+      "repo": "https://github.com/delphi-blocks/WiRL.git",
+      "ref": "v4.6.0",
+      "sourcePaths": [
+        "Source/Core"
+      ]
+    },
+    {
+      "$comment": "Transitive dependency of WiRL (JWT/JOSE auth).",
+      "name": "JOSE",
+      "repo": "https://github.com/paolo-rossi/delphi-jose-jwt.git",
+      "ref": "v3.3.1",
+      "sourcePaths": [
+        "Source/Common",
+        "Source/JOSE"
+      ]
+    },
+    {
+      "$comment": "Transitive dependency of WiRL (Neon JSON serialization).",
+      "name": "Neon",
+      "repo": "https://github.com/paolo-rossi/delphi-neon.git",
+      "ref": "v3.2.0",
+      "sourcePaths": [
+        "Source"
+      ]
+    }
+  ]
+}
