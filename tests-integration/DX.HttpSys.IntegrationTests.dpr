@@ -22,7 +22,8 @@ uses
   DUnitX.Loggers.Console,
   DUnitX.Loggers.Xml.NUnit,
   DUnitX.TestFramework,
-  Test.DX.HttpSys.WiRL in 'Test.DX.HttpSys.WiRL.pas';
+  Test.DX.HttpSys.WiRL in 'Test.DX.HttpSys.WiRL.pas',
+  Test.DX.HttpSys.Horse in 'Test.DX.HttpSys.Horse.pas';
 
 var
   LRunner:  ITestRunner;

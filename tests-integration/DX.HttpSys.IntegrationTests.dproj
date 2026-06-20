@@ -66,6 +66,7 @@
       <MainSource>MainSource</MainSource>
     </DelphiCompile>
     <DCCReference Include="Test.DX.HttpSys.WiRL.pas" />
+    <DCCReference Include="Test.DX.HttpSys.Horse.pas" />
   </ItemGroup>
   <ProjectExtensions>
     <Borland.Personality>Delphi.Personality.12</Borland.Personality>

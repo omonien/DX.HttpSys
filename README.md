@@ -64,8 +64,9 @@ A clean three-layer design — the core never sees a framework, the framework ne
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  LAYER 3 — Framework Adapters                                │
-│  DX.HttpSys.WiRL.pas        DX.HttpSys.WebBroker.pas         │
-│  TWiRLHttpSysServer         TWebBrokerHttpSysDispatcher      │
+│  DX.HttpSys.WiRL.pas   DX.HttpSys.WebBroker.pas             │
+│  DX.HttpSys.Horse.pas  (Horse provider over WebBroker)      │
+│  TWiRLHttpSysServer    TWebBrokerHttpSysDispatcher          │
 └───────────────────────────┬─────────────────────────────────┘
                             │ uses
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -151,6 +152,28 @@ FServer.Active := True;
 > for the master branch (see [`docs/DECISIONS.md`](docs/DECISIONS.md) A-10).
 > Optional integration tests against downloaded third-party sources live in
 > [`tests-integration/`](tests-integration/).
+
+### Horse — run your Horse app on HTTP.sys
+
+```pascal
+uses
+  Horse,
+  DX.HttpSys.Horse;   // a Horse provider backed by HTTP.sys
+
+THorse.Get('/ping',
+  procedure(AReq: THorseRequest; ARes: THorseResponse; ANext: TProc)
+  begin
+    ARes.Send('pong');
+  end);
+
+// Start through this provider instead of Horse's default Indy provider:
+THorseProviderHttpSys<THorse>.Listen(9000);
+```
+
+> ℹ️ Define routes with `THorse` as usual; only the `Listen` call changes. Horse is
+> WebBroker-based, so this adapter is a thin provider over `TWebBrokerHttpSysDispatcher`.
+> Horse is not vendored — verified against Horse v2.0.14 by the integration harness.
+> See [`demo/04.Horse`](demo/04.Horse).
 
 ---
 

@@ -38,6 +38,12 @@ type
 
     [Test]
     procedure UnhandledExceptionInHandler_Yields500;
+
+    // Regression: CookedUrl.pAbsPath is not null-terminated at the path end, so
+    // a naive string() cast leaked the query string into Path. With a query
+    // present, Path must stop at the '?' and QueryString must hold the rest.
+    [Test]
+    procedure RequestWithQuery_SplitsPathAndQuery;
   end;
 
 implementation
@@ -296,6 +302,43 @@ begin
     try
       LResp := LClient.Get(BaseUrl(LPort));
       Assert.AreEqual(500, LResp.StatusCode, 'unhandled handler exception must yield 500');
+    finally
+      LClient.Free;
+    end;
+  finally
+    LServer.Free;
+  end;
+end;
+
+procedure TServerIntegrationTests.RequestWithQuery_SplitsPathAndQuery;
+var
+  LPort:   Word;
+  LServer: TDXHttpSysServer;
+  LClient: THTTPClient;
+  LResp:   IHTTPResponse;
+  LPath:   string;
+  LQuery:  string;
+begin
+  LPort := FindFreePort;
+  Assert.IsTrue(LPort > 0, 'could not find a free port');
+
+  LServer := StartServer(LPort,
+    TProcHandler.Create(
+      procedure(AReq: TDXHttpSysRequest; AResp: TDXHttpSysResponse)
+      begin
+        // Capture the parsed values; the handler runs on a worker thread, but
+        // the request lives only for this call so we copy out immediately.
+        LPath  := AReq.Path;
+        LQuery := AReq.QueryString;
+        AResp.SetBody('ok');
+      end));
+  try
+    LClient := THTTPClient.Create;
+    try
+      LResp := LClient.Get(Format('http://localhost:%d/echo?msg=ping&x=1', [LPort]));
+      Assert.AreEqual(200, LResp.StatusCode, 'status');
+      Assert.AreEqual('/echo', LPath, 'Path must exclude the query string');
+      Assert.AreEqual('msg=ping&x=1', LQuery, 'QueryString must hold the query');
     finally
       LClient.Free;
     end;

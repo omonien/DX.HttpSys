@@ -39,6 +39,23 @@
       "sourcePaths": [
         "Source"
       ]
+    },
+    {
+      "$comment": [
+        "Horse web framework — used by the DX.HttpSys.Horse provider test.",
+        "excludeFiles drops Horse's bundled Web.WebConst.pas: an FPC compat shim",
+        "that, on the Delphi search path, shadows the RTL unit of the same name and",
+        "breaks resolution of the RTL Web.* units (Web.HTTPApp not found)."
+      ],
+      "name": "Horse",
+      "repo": "https://github.com/HashLoad/horse.git",
+      "ref": "v2.0.14",
+      "sourcePaths": [
+        "src"
+      ],
+      "excludeFiles": [
+        "src/Web.WebConst.pas"
+      ]
     }
   ]
 }
