@@ -1,0 +1,54 @@
+﻿/// <summary>
+///   DX.HttpSys.Horse — Horse adapter — a Horse server provider backed by HTTP.sys.
+/// </summary>
+/// <remarks>
+///   Requires the external Horse library on the search path to build. Like the
+///   WiRL package, it is intentionally NOT part of the build group (see
+///   docs/DECISIONS.md A-10/A-15).
+/// </remarks>
+/// <author>Olaf Monien</author>
+/// <created>2026-06-20</created>
+/// <license>MIT</license>
+package DX.HttpSys.Horse;
+
+{$R *.res}
+{$IFDEF IMPLICITBUILDING This IFDEF should not be used by users}
+{$ALIGN 8}
+{$ASSERTIONS ON}
+{$BOOLEVAL OFF}
+{$DEBUGINFO OFF}
+{$EXTENDEDSYNTAX ON}
+{$IMPORTEDDATA ON}
+{$IOCHECKS ON}
+{$LOCALSYMBOLS ON}
+{$LONGSTRINGS ON}
+{$OPENSTRINGS ON}
+{$OPTIMIZATION OFF}
+{$OVERFLOWCHECKS OFF}
+{$RANGECHECKS OFF}
+{$REFERENCEINFO ON}
+{$SAFEDIVIDE OFF}
+{$STACKFRAMES ON}
+{$TYPEDADDRESS OFF}
+{$VARSTRINGCHECKS ON}
+{$WRITEABLECONST OFF}
+{$MINENUMSIZE 1}
+{$IMAGEBASE $400000}
+{$DEFINE DEBUG}
+{$ENDIF IMPLICITBUILDING}
+{$RUNONLY}
+{$IMPLICITBUILD ON}
+
+// The WebBroker units Horse builds on link statically (Embarcadero ships no
+// separate runtime package for them); silence the "implicitly imported" notice.
+{$WARN IMPLICIT_IMPORT OFF}
+
+requires
+  rtl,
+  DX.HttpSys.Core,
+  DX.HttpSys.WebBroker;
+
+contains
+  DX.HttpSys.Horse in 'Adapters\DX.HttpSys.Horse.pas';
+
+end.
