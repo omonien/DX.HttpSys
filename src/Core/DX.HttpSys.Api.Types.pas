@@ -16,6 +16,14 @@ unit DX.HttpSys.Api.Types;
 
 interface
 
+// The Windows HTTP Server API uses C int-sized (4-byte) enums. Delphi's default
+// is 1-byte; passing a 1-byte enum BY VALUE to httpapi.dll leaves the upper bytes
+// of the argument register uninitialised on Win64, so the API reads a garbage
+// property value and fails with ERROR_INVALID_PARAMETER (e.g.
+// HttpSetRequestQueueProperty with HttpServerQueueLengthProperty). Forcing 4-byte
+// enums unit-wide matches the C ABI and fixes Win64. See docs/DECISIONS.md (A-18).
+{$MINENUMSIZE 4}
+
 uses
   Winapi.Windows,
   Winapi.WinSock2;

@@ -43,6 +43,12 @@ type
 
     [Test]
     procedure InitializeV2_BeforeLoad_RaisesDeterministically;
+
+    // Regression: C int-sized enums passed by value to httpapi.dll must be 4
+    // bytes, or the call fails on Win64 with ERROR_INVALID_PARAMETER (the upper
+    // bytes of the argument register are garbage). See docs/DECISIONS.md A-18.
+    [Test]
+    procedure ApiEnums_AreFourBytes;
   end;
 
 implementation
@@ -155,6 +161,16 @@ begin
   finally
     LApi.Free;
   end;
+end;
+
+procedure TApiSmokeTests.ApiEnums_AreFourBytes;
+begin
+  // These mirror C int-sized enums; {$MINENUMSIZE 4} in DX.HttpSys.Api.Types
+  // guarantees the 4-byte layout the API ABI expects.
+  Assert.AreEqual(4, SizeOf(HTTP_SERVER_PROPERTY), 'HTTP_SERVER_PROPERTY');
+  Assert.AreEqual(4, SizeOf(HTTP_VERB), 'HTTP_VERB');
+  Assert.AreEqual(4, SizeOf(HTTP_HEADER_ID), 'HTTP_HEADER_ID');
+  Assert.AreEqual(4, SizeOf(HTTP_DATA_CHUNK_TYPE), 'HTTP_DATA_CHUNK_TYPE');
 end;
 
 initialization
