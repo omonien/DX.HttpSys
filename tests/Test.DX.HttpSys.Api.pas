@@ -43,6 +43,20 @@ type
 
     [Test]
     procedure InitializeV2_BeforeLoad_RaisesDeterministically;
+
+    // Regression: C int-sized enums passed by value to httpapi.dll must be 4
+    // bytes, or the call fails on Win64 with ERROR_INVALID_PARAMETER (the upper
+    // bytes of the argument register are garbage). See docs/DECISIONS.md A-18.
+    [Test]
+    procedure ApiEnums_AreFourBytes;
+
+    // Regression: a queue created with HTTPAPI_VERSION_2 makes HttpSendHttpResponse
+    // read a full HTTP_RESPONSE_V2. HTTP_RESPONSE must therefore alias V2, not V1,
+    // so the buffer covers ResponseInfoCount/pResponseInfo. With V1 the kernel read
+    // those 16 trailing bytes from uninitialised stack — fine on Win32 (happened to
+    // be zero), connection-reset on Win64. See docs/DECISIONS.md A-19.
+    [Test]
+    procedure HttpResponse_IsV2Sized;
   end;
 
 implementation
@@ -155,6 +169,28 @@ begin
   finally
     LApi.Free;
   end;
+end;
+
+procedure TApiSmokeTests.ApiEnums_AreFourBytes;
+begin
+  // These mirror C int-sized enums; {$MINENUMSIZE 4} in DX.HttpSys.Api.Types
+  // guarantees the 4-byte layout the API ABI expects.
+  Assert.AreEqual(4, SizeOf(HTTP_SERVER_PROPERTY), 'HTTP_SERVER_PROPERTY');
+  Assert.AreEqual(4, SizeOf(HTTP_VERB), 'HTTP_VERB');
+  Assert.AreEqual(4, SizeOf(HTTP_HEADER_ID), 'HTTP_HEADER_ID');
+  Assert.AreEqual(4, SizeOf(HTTP_DATA_CHUNK_TYPE), 'HTTP_DATA_CHUNK_TYPE');
+end;
+
+procedure TApiSmokeTests.HttpResponse_IsV2Sized;
+begin
+  // HTTP_RESPONSE must be the V2 layout (V1 + ResponseInfoCount + pResponseInfo).
+  // The two trailing fields add 16 bytes on Win64 (USHORT + 6 pad + 8-byte ptr).
+  // If this regresses to V1, HttpSendHttpResponse reads past the buffer on Win64
+  // and the connection is reset (12030) on every response.
+  Assert.AreEqual(SizeOf(HTTP_RESPONSE_V2), SizeOf(HTTP_RESPONSE),
+    'HTTP_RESPONSE must alias HTTP_RESPONSE_V2, not V1');
+  Assert.IsTrue(SizeOf(HTTP_RESPONSE) > SizeOf(HTTP_RESPONSE_V1),
+    'HTTP_RESPONSE (V2) must be larger than V1');
 end;
 
 initialization

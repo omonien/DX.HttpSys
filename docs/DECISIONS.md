@@ -312,6 +312,31 @@ The same non-null-terminated hazard applies to the ANSI buffer pointers
 through a shared `AnsiStringFromBuffer(ptr, length)` helper rather than cast as
 null-terminated strings, closing the whole class rather than just the path case.
 
+### A-19 — `HTTP_RESPONSE` must alias the V2 layout, not V1 (Win64 send fix)
+**Decision:** `HTTP_RESPONSE` aliases `HTTP_RESPONSE_V2` (V1 fields inline + `ResponseInfoCount` /
+`pResponseInfo`), not `HTTP_RESPONSE_V1`. The two send sites (`TDXHttpSysResponse.Send` via
+`BuildHttpResponse`, and `TDXHttpSysReceiverThread.RejectRequest`) keep their existing
+`FillChar(.., SizeOf(..), 0)` — sizing the alias to V2 makes that zero the full 568 bytes.
+
+**Why (found locally; Win32 passed, Win64 reset every response):** the request queue is created
+with `HTTPAPI_VERSION_2` (A-3/Phase 2), so `HttpSendHttpResponse` reads the response buffer as a
+full `HTTP_RESPONSE_V2`. The struct was only declared as V1 (552 bytes on Win64), so the kernel
+read the 16 trailing V2 bytes (`ResponseInfoCount` + `pResponseInfo`) out of **uninitialised
+stack**: a non-zero count with a garbage pointer → `HttpSendHttpResponse` returns
+`ERROR_INVALID_PARAMETER` (87) → HTTP.sys resets the connection → the client sees WinHTTP `12030`.
+On Win32 those bytes happened to be zero on the stack, so it silently worked; on Win64 they were
+garbage. The whole integration/stress/soak suite failed on Win64 (every real HTTP round-trip) while
+the pure unit tests passed — confirmed by a minimal in-process server+client repro that passed on
+Win32 and reset on Win64, then passed on Win64 once the buffer was V2-sized and zeroed. This is a
+**second, independent** Win64 defect from A-18: A-18 fixed server *start* (`HttpSetRequestQueueProperty`),
+A-19 fixes response *send*.
+
+**How to apply:** When a struct is passed to a `*_VERSION_2` API, model the **full V2 layout** even
+if the V2-only fields are never populated — they must exist and be zeroed so the kernel does not read
+past the buffer. Never alias an `HTTP_RESPONSE`/`HTTP_REQUEST` to V1 when the queue is V2. Guarded by
+`HttpResponse_IsV2Sized` in the standard suite. (This is the response-side twin of A-2's "always
+zero-initialise what the kernel reads".)
+
 <!-- New architecture decisions are appended below. -->
 
 ---
