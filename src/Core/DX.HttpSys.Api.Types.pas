@@ -380,7 +380,49 @@ type
   end;
   PHTTP_RESPONSE_V1 = ^HTTP_RESPONSE_V1;
 
-  HTTP_RESPONSE  = HTTP_RESPONSE_V1;
+  // HTTP_RESPONSE_INFO_TYPE / HTTP_RESPONSE_INFO – the V2 trailer payload.
+  // We never populate response-info, but the V2 fields MUST exist (and be zeroed)
+  // because a queue created with HTTPAPI_VERSION_2 makes HttpSendHttpResponse read
+  // a full HTTP_RESPONSE_V2; see HTTP_RESPONSE below.
+  HTTP_RESPONSE_INFO_TYPE = (
+    HttpResponseInfoTypeMultipleKnownHeaders = 0,
+    HttpResponseInfoTypeAuthentication       = 1,
+    HttpResponseInfoTypeQosProperty          = 2,
+    HttpResponseInfoTypeChannelBind          = 3
+  );
+
+  HTTP_RESPONSE_INFO = record
+    Type_:  HTTP_RESPONSE_INFO_TYPE;
+    Length: ULONG;
+    pInfo:  Pointer;
+  end;
+  PHTTP_RESPONSE_INFO = ^HTTP_RESPONSE_INFO;
+
+  // HTTP_RESPONSE_V2 = HTTP_RESPONSE_V1 + { ResponseInfoCount, pResponseInfo }.
+  // The V1 fields are declared inline (not via an embedded V1) so all existing
+  // field accesses (RawResp.StatusCode, .Headers, …) stay unchanged. The two
+  // trailing fields make SizeOf match what the kernel reads (568 bytes on Win64),
+  // so the whole struct is zero-initialised and HttpSendHttpResponse no longer
+  // reads ResponseInfoCount/pResponseInfo out of uninitialised stack memory.
+  HTTP_RESPONSE_V2 = record
+    Flags:             ULONG;
+    Version:           THTTP_VERSION;
+    StatusCode:        USHORT;
+    ReasonLength:      USHORT;
+    pReason:           PAnsiChar;
+    Headers:           HTTP_RESPONSE_HEADERS;
+    EntityChunkCount:  USHORT;
+    pEntityChunks:     PHTTP_DATA_CHUNK;
+    ResponseInfoCount: USHORT;
+    pResponseInfo:     PHTTP_RESPONSE_INFO;
+  end;
+  PHTTP_RESPONSE_V2 = ^HTTP_RESPONSE_V2;
+
+  // The request queue is created with HTTPAPI_VERSION_2, so responses are sent
+  // as V2. Aliasing HTTP_RESPONSE to V2 (not V1) is the Win64 correctness fix:
+  // on Win32 the missing 16 trailing bytes happened to be zero on the stack, on
+  // Win64 they were garbage → ERROR_INVALID_PARAMETER (87) → connection reset.
+  HTTP_RESPONSE  = HTTP_RESPONSE_V2;
   PHTTP_RESPONSE = ^HTTP_RESPONSE;
 
 implementation
