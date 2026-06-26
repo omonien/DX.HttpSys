@@ -53,19 +53,19 @@ begin
 
     LServer := TWiRLServer.Create(nil);
     try
-      LServer.Port := 8080;
+      LServer.Port := 80;                 // shared port
       // Select the HTTP.sys engine registered by DX.HttpSys.WiRL.
       LServer.ServerVendor := 'HttpSys';
 
       LServer
-        .AddEngine<TWiRLEngine>('/rest')
+        .AddEngine<TWiRLEngine>('/rest')  // single source of truth for the path
           .SetEngineName('DX.HttpSys WiRL Demo')
           .AddApplication('/app')
             .SetResources('*');
 
-      LServer.Active := True;
+      LServer.Active := True;             // binds http://localhost:80/rest/
 
-      Writeln('WiRL over DX.HttpSys on http://localhost:8080/rest/app/hello');
+      Writeln('WiRL over DX.HttpSys on http://localhost:80/rest/app/hello');
       Writeln('Press <Enter> to stop.');
       Readln;
 

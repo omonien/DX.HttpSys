@@ -64,6 +64,7 @@
       <MainSource>MainSource</MainSource>
     </DelphiCompile>
     <DCCReference Include="Test.DX.HttpSys.Api.pas" />
+    <DCCReference Include="Test.DX.HttpSys.Url.pas" />
     <DCCReference Include="Test.DX.HttpSys.Server.pas" />
     <DCCReference Include="Test.DX.HttpSys.Stress.pas" />
     <DCCReference Include="Test.DX.HttpSys.WebBroker.pas" />

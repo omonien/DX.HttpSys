@@ -43,6 +43,8 @@ uses
   WiRL.http.Response,
   WiRL.http.Server.Interfaces,
   WiRL.Core.Context.Server,
+  WiRL.Engine.REST,      // TWiRLServer.Engines (master branch)
+  WiRL.Core.Engine,      // TWiRLCustomEngine.BasePath
   // DX.HttpSys Core
   DX.HttpSys.Request,
   DX.HttpSys.Response,
@@ -133,6 +135,8 @@ type
     FListener:       IWiRLListener;
     FPort:           Word;
     FThreadPoolSize: Integer;
+    FHost:           string;
+    FScheme:         TDXScheme;
   public
     constructor Create;
     destructor Destroy; override;
@@ -147,6 +151,12 @@ type
     function  GetListener: IWiRLListener;
     procedure SetListener(AValue: IWiRLListener);
     function  GetServerImplementation: TObject;
+
+    // The host/scheme the HTTP.sys prefix binds on; the path comes from each
+    // WiRL engine's BasePath. Defaults: 'localhost' + Http (admin-free). Set
+    // before Active := True to bind '+' / an IP, or https.
+    property Host:   string    read FHost   write FHost;
+    property Scheme: TDXScheme read FScheme write FScheme;
   end;
 
 implementation
@@ -426,6 +436,8 @@ begin
   inherited Create;
   FPort := 8080;
   FThreadPoolSize := 0; // 0 => Core default (CPUCount * 2)
+  FHost := 'localhost'; // admin-free default; set to '+' / an IP for a wildcard bind
+  FScheme := TDXScheme.Http;
   FServer := TDXHttpSysServer.Create;
 end;
 
@@ -436,16 +448,25 @@ begin
 end;
 
 procedure TWiRLHttpSysServer.Startup;
+var
+  LServer: TWiRLServer;
+  LEngine: TWiRLCustomEngine;
 begin
   if not Assigned(FListener) then
     raise Exception.Create('[DX.HttpSys.WiRL] Listener must be set before Startup');
 
   FBridge := TDXToWiRLBridge.Create(FListener);
-  FServer.Port := FPort;
   FServer.Handler := FBridge;
   if FThreadPoolSize > 0 then
     FServer.ThreadCount := FThreadPoolSize;
-  FServer.UseLocalhost; // safe default; use UseAllInterfaces for http://+:port/
+
+  // One HTTP.sys prefix per WiRL engine: the engine's BasePath is the single
+  // source of truth for the path; scheme/host/port come from this adapter.
+  LServer := FListener as TWiRLServer;
+  for LEngine in LServer.Engines do
+    FServer.AddUrlPrefix(
+      TDXHttpSysServer.BuildPrefix(FScheme, FHost, FPort, LEngine.BasePath));
+
   FServer.Start;
 end;
 

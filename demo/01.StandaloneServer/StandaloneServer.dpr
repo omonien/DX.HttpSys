@@ -2,12 +2,16 @@
 ///   StandaloneServer - the smallest possible DX.HttpSys server.
 /// </summary>
 /// <remarks>
-///   Starts a kernel-mode HTTP.sys listener on http://localhost:8080/ and answers
-///   every request with a short text body. No framework, just the Core.
+///   Starts a kernel-mode HTTP.sys listener on http://localhost:80/standalone/ and
+///   answers every request with a short text body. No framework, just the Core.
+///
+///   It binds under a distinct path prefix on the shared port 80, so it can run
+///   simultaneously with the WiRL (/rest), WebBroker (/webbroker) and Horse
+///   (/horse) demos — HTTP.sys routes by longest-prefix match across processes.
 ///
 ///   localhost binding needs no elevated rights. To listen on all interfaces
-///   (http://+:8080/) either run elevated or pre-register a URL ACL:
-///     netsh http add urlacl url=http://+:8080/ user=DOMAIN\User
+///   (http://+:80/standalone/) either run elevated or pre-register a URL ACL:
+///     netsh http add urlacl url=http://+:80/standalone/ user=DOMAIN\User
 /// </remarks>
 /// <author>Olaf Monien</author>
 /// <created>2026-06-19</created>
@@ -44,7 +48,7 @@ begin
 end;
 
 const
-  cPort = 8080;
+  cPrefix = 'http://localhost:80/standalone/';
 
 var
   LServer: TDXHttpSysServer;
@@ -52,14 +56,12 @@ begin
   try
     LServer := TDXHttpSysServer.Create;
     try
-      LServer.Port := cPort;
       LServer.Handler := THelloHandler.Create;
-      LServer.UseLocalhost;
+      LServer.AddUrlPrefix(cPrefix);
       LServer.Start;
 
-      Writeln(Format('DX.HttpSys standalone server listening on http://localhost:%d/',
-        [cPort]));
-      Writeln('Try:  curl http://localhost:' + IntToStr(cPort) + '/');
+      Writeln('DX.HttpSys standalone server listening on ' + cPrefix);
+      Writeln('Try:  curl ' + cPrefix);
       Writeln('Press <Enter> to stop.');
       Readln;
 

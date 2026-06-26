@@ -111,10 +111,9 @@ function StartServer(APort: Word; AThreadCount: Integer;
 begin
   Result := TDXHttpSysServer.Create;
   try
-    Result.Port := APort;
     Result.ThreadCount := AThreadCount;
     Result.Handler := AHandler;
-    Result.UseLocalhost;
+    Result.AddUrlPrefix(Format('http://localhost:%d/', [APort]));
     Result.Start;
   except
     Result.Free;
