@@ -32,24 +32,53 @@ true mechanism isn't a raw-string trap: reject a prefix that doesn't start with 
 `https://` or doesn't end with `/` (HTTP.sys requires the trailing slash), raising a clear
 `EDXHttpSysError` at call time rather than a cryptic Win32 error at `Start`.
 
-**Each adapter builds its own complete URL** (the user's explicit choice — no shared host-build
-helper in the Core; the small host translation lives where it's used):
-- `0.0.0.0` / default host → `http://+:<port>/...` (wildcard, needs urlacl/admin)
-- `localhost` / `127.0.0.1` → `http://localhost:<port>/...` (loopback, no rights)
-- any other host → `http://<host>:<port>/...`
+**Each adapter assembles its own complete URL** from its parts and passes the finished string to
+`AddUrlPrefix`. The host/scheme→string translation is shared (DRY) via one small Core helper —
+`AddUrlPrefix` remains the *only* bind mechanism; the helper only formats the string, it does not
+bind:
+
+`class function TDXHttpSysServer.BuildPrefix(AScheme: TDXScheme; const AHost: string; APort: Word;
+const APath: string): string;` applying:
+- `0.0.0.0` / empty host → `+:<port>/...` (wildcard, needs urlacl/admin)
+- `localhost` / `127.0.0.1` → `localhost:<port>/...` (loopback, no rights)
+- any other host → `<host>:<port>/...`
+- scheme text from `TDXScheme`; path normalised with a single trailing `/`.
+
+Adapters call `AddUrlPrefix(BuildPrefix(...))`. Consumers who already have a full URL still call
+`AddUrlPrefix('http://localhost:80/x/')` directly.
 
 So **how the demos/adapters set "localhost" vs "https://+:1223"**: they pass the full string to
-`AddUrlPrefix`. There is no separate host or port property anymore — the URL says everything.
+`AddUrlPrefix`. There is no separate host or port property on the *Core* anymore — the URL says
+everything.
+
+### Adapters must not hard-code host/scheme — three free building blocks
+The frameworks do **not** supply a full URL. WiRL gives only a `Port` (no host, no scheme);
+Horse gives `Host` + `Port` (no scheme). If an adapter hard-codes `http://localhost`, a user can
+never bind `+` / a specific IP, nor `https`. So each adapter exposes the parts it must own, with
+sensible defaults, and assembles `scheme://host:port<basepath>/`:
+
+- **Scheme** — a scoped enum **`TDXScheme = (Http, Https)`** (`{$SCOPEDENUMS ON}`), declared in
+  the Core (`DX.HttpSys.Server.pas`) so both adapters and consumers share one type. Maps to
+  `http` / `https`. (`https` binds a kernel-delegated cert via `netsh http add sslcert`
+  separately — standard HTTP.sys; the adapter only emits the scheme.)
+- **Host** — a string, default `localhost`. Values `0.0.0.0` / empty → `+` (wildcard);
+  `localhost` / `127.0.0.1` → `localhost`; anything else used verbatim.
+- **Path/BasePath** — owned by the framework (WiRL engine `BasePath`; Horse demo route prefix).
+
+This is the answer to "how would one replace localhost with `+` or an IP, or use https": set the
+adapter's `Host` / `Scheme` before starting. The default (`Http` + `localhost`) keeps the demos
+admin-free out of the box.
 
 ### Impact surface (all call sites of the removed API)
 - Core: `DX.HttpSys.Server.pas` — remove the members; update the class doc-comment (lines 14,
   56–58, 92–94, 128–131, 244–252).
 - WiRL adapter `DX.HttpSys.WiRL.pas:423,427` and `DX.HttpSys.WiRL.REST.pas:444,448` —
-  replace `FServer.Port := FPort; FServer.UseLocalhost` with a self-built prefix per engine
-  (`http://localhost:<FPort><Engine.BasePath>/`), reading `BasePath` per Part A.
+  replace `FServer.Port := FPort; FServer.UseLocalhost` with `AddUrlPrefix(BuildPrefix(FScheme,
+  FHost, FPort, Engine.BasePath))` per engine; add `Host`/`Scheme` adapter properties (Part A).
 - Horse adapter `DX.HttpSys.Horse.pas` — already builds its own prefix from `FHost`/`FPort`
   and does **not** use `UseLocalhost`; its `Port`/`Host` are Horse-provider class properties,
-  not the Core `Port`, so they stay. Only add `BasePath` (Part A).
+  not the Core `Port`, so they stay. Add `Scheme` + `BasePath` and route the prefix build
+  through the shared `BuildPrefix` (Part A).
 - Tests (4 helpers) — `Test.DX.HttpSys.Server.pas:130-132`, `Test.DX.HttpSys.Stress.pas:114-117`,
   `Test.DX.HttpSys.WebBroker.pas:160-162`, `Test.DX.HttpSys.Soak.pas:169-172`:
   replace `Result.Port := APort; Result.UseLocalhost` with
@@ -77,16 +106,20 @@ netsh help is the safety net if someone switches to `+:80` or the port is otherw
 
 ### WiRL adapter (`src/Adapters/DX.HttpSys.WiRL.pas:423-427`, `.REST.pas:444-448`)
 Replace `FServer.Port := FPort; FServer.UseLocalhost` (both removed in Part 0) with a loop over
-the server's engines, building a complete localhost prefix per engine's `BasePath`:
+the server's engines, building a complete prefix per engine's `BasePath` from the adapter's own
+`Scheme` + `Host` + `Port`:
 
 ```pascal
 LServer := FListener as TWiRLServer;            // add WiRL.http.Server to uses
 for LEngine in LServer.Engines do
-  FServer.AddUrlPrefix(Format('http://localhost:%d%s/', [FPort, LEngine.BasePath]));
+  FServer.AddUrlPrefix(BuildPrefix(FScheme, FHost, FPort, LEngine.BasePath));
 ```
 
-`FPort` here is the adapter's own field (set from `TWiRLServer.Port`), not the removed Core
-`Port`. The adapter builds the full URL itself (Part 0).
+The adapter gains `Host: string` (default `localhost`) and `Scheme: TDXScheme` (default `Http`)
+properties, settable before `Active := True`. `FPort` is the adapter's own field (from
+`TWiRLServer.Port`), not the removed Core `Port`. `BuildPrefix` is the shared Core class function
+(Part 0) — the adapter does not re-implement the host/scheme translation. Multi-engine servers
+bind one prefix per engine.
 
 Verified against fetched WiRL source: `TWiRLServer.Engines: TWiRLEngineList` is public;
 `TWiRLCustomEngine.BasePath` (single-segment, always leading `/`) holds `/rest`. Engines are
@@ -96,11 +129,17 @@ is unaffected.
 
 ### Horse adapter (`src/Adapters/DX.HttpSys.Horse.pas:150-175`)
 Horse routes match on absolute registered paths (dispatch uses `AUsePrefix := False`), so there
-is no provider-readable base path. Add a settable `class property BasePath` backed by
-`class var FBasePath` (mirroring the existing Horse-provider `Host`/`Port` class properties —
-these are Horse's own, unaffected by the Core `Port` removal), folded into the three
-`AddUrlPrefix` Format branches the provider already builds itself. The **demo** sets
-`BasePath := 'horse'` before `Listen` and registers routes under `/horse/...`.
+is no provider-readable base path. The Horse provider **already** has `Host`/`Port` class
+properties and builds its own prefix from them — but it hard-codes the `http://` scheme (lines
+171/173/175). So Horse has the **same scheme gap** as WiRL. Changes:
+- Add `class property Scheme: TDXScheme` (default `Http`) — closes the hard-coded-`http` gap,
+  consistent with WiRL.
+- Add `class property BasePath: string` (backed by `class var FBasePath`) — the path segment.
+- Route the prefix build through the shared Core `BuildPrefix(FScheme, FHost, FPort, FBasePath)`,
+  replacing the three hand-rolled `localhost` / wildcard / explicit-host branches — so the
+  host/scheme logic lives in exactly one place, shared with WiRL.
+
+The **demo** sets `BasePath := 'horse'` before `Listen` and registers routes under `/horse/...`.
 
 ### WebBroker demo (`demo/03.WebBroker/WebBrokerDemo.dpr`)
 No adapter change. The demo binds `AddUrlPrefix('http://localhost:80/webbroker/')` and registers
@@ -136,6 +175,9 @@ Central in the Core → every adapter and every consumer benefits, no duplicatio
   doesn't need an actual privileged-port bind.
 - Core unit test for the new `AddUrlPrefix` validation: a prefix without a scheme or without a
   trailing `/` raises `EDXHttpSysError` at call time (not at `Start`).
+- Core unit test for `BuildPrefix`: `Http`/`Https` → correct scheme; `0.0.0.0`/empty → `+`;
+  `localhost`/`127.0.0.1` → `localhost`; explicit host verbatim; path gets exactly one trailing
+  `/`; basepath like `/rest` is preserved. This is the host/scheme logic both adapters rely on.
 - Update the existing tests that used the removed API (the 4 helpers in
   `Test.DX.HttpSys.{Server,Stress,WebBroker,Soak}.pas`) to `AddUrlPrefix`. The
   `ApiEnums_AreFourBytes` / `HttpResponse_IsV2Sized` tests are unaffected.
@@ -148,10 +190,12 @@ Central in the Core → every adapter and every consumer benefits, no duplicatio
 
 Add **A-20** to `docs/DECISIONS.md`: `AddUrlPrefix(complete-URL)` is the single, explicit bind
 mechanism; `Port` / `UseLocalhost` / `UseAllInterfaces` removed (breaking) because they were a
-vague second source of truth; each adapter builds its own full URL; `AddUrlPrefix` validates the
-prefix shape. The single-source-of-truth path principle for port sharing (framework owns the
-path, adapter reads it; Standalone sets it at HTTP.sys level), and the central access-denied →
-netsh guidance.
+vague second source of truth; `AddUrlPrefix` validates the prefix shape. Adapters assemble their
+own URL from three building blocks — `Scheme: TDXScheme` (default `Http`), `Host` (default
+`localhost`), and the framework-owned path — via the shared `BuildPrefix` formatter (DRY, but
+`AddUrlPrefix` stays the only binder). This is how a consumer chooses `+` / an IP / `https`.
+The single-source-of-truth path principle for port sharing (framework owns the path, adapter
+reads it; Standalone sets it at HTTP.sys level), and the central access-denied → netsh guidance.
 
 Update the README quick-starts and `DX.HttpSys.Server.pas` class doc-comment that currently show
 `Server.Port := 8080; Server.UseLocalhost` to the new `AddUrlPrefix` form.
