@@ -121,6 +121,53 @@ properties, settable before `Active := True`. `FPort` is the adapter's own field
 (Part 0) — the adapter does not re-implement the host/scheme translation. Multi-engine servers
 bind one prefix per engine.
 
+**User-facing demo code (02.WiRL).** The user keeps writing ordinary WiRL; the only DX.HttpSys
+lines are `uses DX.HttpSys.WiRL`, `ServerVendor := 'HttpSys'`, and — for the shared-port demo —
+binding the engine under `/rest`. The HTTP.sys prefix (`http://localhost:80/rest/`) is derived
+from the engine `BasePath`, so it is **not** restated anywhere:
+
+```pascal
+uses
+  WiRL.Core.Engine, WiRL.http.Server, WiRL.Core.Registry, { … },
+  DX.HttpSys.WiRL;   // selects the kernel HTTP.sys engine
+
+var
+  LServer: TWiRLServer;
+begin
+  TWiRLResourceRegistry.Instance.RegisterResource<THelloResource>;
+
+  LServer := TWiRLServer.Create(nil);
+  try
+    LServer.Port := 80;                 // shared port
+    LServer.ServerVendor := 'HttpSys';  // <-- DX.HttpSys engine
+
+    LServer
+      .AddEngine<TWiRLEngine>('/rest')  // <-- single source of truth for the path
+        .SetEngineName('DX.HttpSys WiRL Demo')
+        .AddApplication('/app')
+          .SetResources('*');
+
+    LServer.Active := True;             // binds http://localhost:80/rest/
+    Writeln('WiRL on HTTP.sys: http://localhost:80/rest/app/hello');
+    Readln;
+    LServer.Active := False;
+  finally
+    LServer.Free;
+  end;
+end.
+```
+
+To bind something other than the `localhost` default (e.g. all interfaces, or TLS), reach the
+adapter through WiRL's `ServerImplementation` after selecting the vendor and set its `Host` /
+`Scheme` before `Active := True` (only the HttpSys vendor unit is linked, so
+`ServerImplementation` is the `TWiRLHttpSysServer`):
+
+```pascal
+LServer.ServerVendor := 'HttpSys';
+(LServer.ServerImplementation as TWiRLHttpSysServer).Host   := '+';            // all interfaces
+(LServer.ServerImplementation as TWiRLHttpSysServer).Scheme := TDXScheme.Https; // → https://+:80/rest/
+```
+
 Verified against fetched WiRL source: `TWiRLServer.Engines: TWiRLEngineList` is public;
 `TWiRLCustomEngine.BasePath` (single-segment, always leading `/`) holds `/rest`. Engines are
 started before the adapter's `Startup`, so the path is available. Same API for 4.x and master.
@@ -139,7 +186,48 @@ properties and builds its own prefix from them — but it hard-codes the `http:/
   replacing the three hand-rolled `localhost` / wildcard / explicit-host branches — so the
   host/scheme logic lives in exactly one place, shared with WiRL.
 
-The **demo** sets `BasePath := 'horse'` before `Listen` and registers routes under `/horse/...`.
+**User-facing demo code (04.Horse).** Horse has no base-path concept, so the path lives in two
+matching spots the user controls directly: the provider's `BasePath` (drives the HTTP.sys prefix)
+and the routes registered under that same prefix. The user writes ordinary Horse and swaps only
+the `Listen` call for the provider:
+
+```pascal
+uses
+  Horse,
+  DX.HttpSys.Horse;   // the HTTP.sys provider
+
+begin
+  THorse.Get('/horse/ping',                         // routes under the shared prefix
+    procedure(AReq: THorseRequest; ARes: THorseResponse; ANext: TProc)
+    begin
+      ARes.Send('pong');
+    end);
+
+  THorse.Get('/horse/hello',
+    procedure(AReq: THorseRequest; ARes: THorseResponse; ANext: TProc)
+    var
+      LName: string;
+    begin
+      if not AReq.Query.TryGetValue('name', LName) then
+        LName := 'world';
+      ARes.Send('Hello, ' + LName + '!');
+    end);
+
+  THorseProviderHttpSys<THorse>.Port     := 80;       // shared port
+  THorseProviderHttpSys<THorse>.Host     := 'localhost';
+  THorseProviderHttpSys<THorse>.BasePath := 'horse';  // → http://localhost:80/horse/
+  Writeln('Horse on HTTP.sys: http://localhost:80/horse/ping');
+  THorseProviderHttpSys<THorse>.Listen;
+end.
+```
+
+For all interfaces or TLS, set the existing `Host` (`'+'` / an IP) and the new `Scheme`
+(`TDXScheme.Https`) class properties before `Listen` — same three building blocks as WiRL:
+
+```pascal
+THorseProviderHttpSys<THorse>.Host   := '+';
+THorseProviderHttpSys<THorse>.Scheme := TDXScheme.Https;   // → https://+:80/horse/
+```
 
 ### WebBroker demo (`demo/03.WebBroker/WebBrokerDemo.dpr`)
 No adapter change. The demo binds `AddUrlPrefix('http://localhost:80/webbroker/')` and registers
