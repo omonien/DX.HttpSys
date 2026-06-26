@@ -51,7 +51,7 @@ type
 
   THorseProviderHttpSys<T: class> = class(THorseProviderAbstract<T>)
   private
-    class var FPort:     Integer;
+    class var FPort:     Integer;  // Horse provider API contract (Listen takes Integer)
     class var FHost:     string;
     class var FScheme:   TDXScheme;
     class var FBasePath: string;
@@ -185,8 +185,12 @@ begin
   inherited;
   if FPort <= 0 then
     FPort := GetDefaultPort;
+  // Default to loopback (admin-free), matching the WiRL adapter and the spec's
+  // "Host default localhost". Horse's own GetDefaultHost is '0.0.0.0', which
+  // BuildPrefix maps to the '+' wildcard (needs urlacl/admin) — not the
+  // admin-free default the README advertises. Set Host explicitly for '+'/an IP.
   if FHost.IsEmpty then
-    FHost := GetDefaultHost;
+    FHost := 'localhost';
 
   if FServer <> nil then
     raise Exception.Create('Horse (HTTP.sys) is already listening');
@@ -201,8 +205,10 @@ begin
     // Build the prefix through the shared Core formatter (host/scheme logic lives
     // in exactly one place, shared with WiRL): loopback needs no urlacl, the
     // wildcard ('+') does. BasePath is the path segment routes are registered under.
+    // FPort is Integer (Horse API contract) but a port is a Word; the cast is
+    // explicit so the narrowing is intentional, not a silent implicit conversion.
     FServer.AddUrlPrefix(
-      TDXHttpSysServer.BuildPrefix(FScheme, FHost, FPort, FBasePath));
+      TDXHttpSysServer.BuildPrefix(FScheme, FHost, Word(FPort), FBasePath));
     FServer.Start;
   except
     FreeAndNil(FServer);

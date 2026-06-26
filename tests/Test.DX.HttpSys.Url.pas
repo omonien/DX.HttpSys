@@ -52,6 +52,10 @@ type
     [Test]
     procedure AddUrlPrefix_NoTrailingSlash_Raises;
     [Test]
+    procedure AddUrlPrefix_NoHost_Raises;
+    [Test]
+    procedure AddUrlPrefix_EmptyHostWithPort_Raises;
+    [Test]
     procedure AddUrlPrefix_ValidPrefix_DoesNotRaise;
 
     // --- Actionable access-denied message ---
@@ -122,6 +126,42 @@ begin
       end,
       EDXHttpSysError,
       'A prefix without a trailing slash must raise at call time');
+  finally
+    LServer.Free;
+  end;
+end;
+
+procedure TUrlApiTests.AddUrlPrefix_NoHost_Raises;
+var
+  LServer: TDXHttpSysServer;
+begin
+  LServer := TDXHttpSysServer.Create;
+  try
+    Assert.WillRaise(
+      procedure
+      begin
+        LServer.AddUrlPrefix('http:///x/');
+      end,
+      EDXHttpSysError,
+      'A prefix with an empty host must raise at call time');
+  finally
+    LServer.Free;
+  end;
+end;
+
+procedure TUrlApiTests.AddUrlPrefix_EmptyHostWithPort_Raises;
+var
+  LServer: TDXHttpSysServer;
+begin
+  LServer := TDXHttpSysServer.Create;
+  try
+    Assert.WillRaise(
+      procedure
+      begin
+        LServer.AddUrlPrefix('http://:80/x/');
+      end,
+      EDXHttpSysError,
+      'A prefix with an empty host before the port must raise at call time');
   finally
     LServer.Free;
   end;

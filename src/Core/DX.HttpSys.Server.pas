@@ -229,13 +229,26 @@ procedure TDXHttpSysServer.AddUrlPrefix(
   const APrefix: string;
   AContext:      HTTP_URL_CONTEXT);
 var
-  Item: TDXUrlPrefix;
+  Item:      TDXUrlPrefix;
+  LHostPart: Integer; // index just past '://'
 begin
   // Validate the one true bind mechanism so it isn't a raw-string trap: a clear
   // error here beats a cryptic Win32 error at Start.
-  if not (APrefix.StartsWith('http://', True) or APrefix.StartsWith('https://', True)) then
+  if APrefix.StartsWith('http://', True) then
+    LHostPart := Length('http://')
+  else if APrefix.StartsWith('https://', True) then
+    LHostPart := Length('https://')
+  else
     raise EDXHttpSysError.CreateWin32(0,
       Format('Invalid URL prefix "%s": must start with "http://" or "https://"', [APrefix]));
+
+  // Require a non-empty host after the scheme: 'http:///x/' and 'http://:80/x/'
+  // pass the scheme+slash checks but would still fail cryptically at Start.
+  if (Length(APrefix) <= LHostPart) or
+     CharInSet(APrefix[LHostPart + 1], ['/', ':']) then  // string is 1-based
+    raise EDXHttpSysError.CreateWin32(0,
+      Format('Invalid URL prefix "%s": missing host after the scheme', [APrefix]));
+
   if not APrefix.EndsWith('/') then
     raise EDXHttpSysError.CreateWin32(0,
       Format('Invalid URL prefix "%s": must end with "/" (HTTP.sys requires the trailing slash)',

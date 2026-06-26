@@ -443,6 +443,10 @@ begin
   // One HTTP.sys prefix per WiRL engine: the engine's BasePath is the single
   // source of truth for the path; scheme/host/port come from this adapter. The
   // listener IS the TWiRLServer (engines are started before our Startup).
+  // Clear first: FServer is reused across Active toggles, so without this a
+  // Stop/Start cycle would re-add every prefix and AddUrlToUrlGroup would fail
+  // with ERROR_ALREADY_EXISTS on the duplicate.
+  FServer.ClearUrlPrefixes;
   LServer := FListener as TWiRLServer;
   for LEngine in LServer.Engines do
     FServer.AddUrlPrefix(
