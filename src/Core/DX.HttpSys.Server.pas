@@ -11,9 +11,8 @@
 ///     Server: TDXHttpSysServer;
 ///
 ///   Server := TDXHttpSysServer.Create;
-///   Server.Port := 8080;
 ///   Server.Handler := TMyHandler.Create; // implements IDXHttpSysRequestHandler
-///   Server.AddUrlPrefix('http://localhost:8080/');
+///   Server.AddUrlPrefix('http://localhost:8080/'); // the single bind mechanism
 ///   Server.Start;
 ///   // ...
 ///   Server.Stop;
@@ -39,7 +38,18 @@ uses
   DX.HttpSys.Response,
   DX.HttpSys.ThreadPool;
 
+{$SCOPEDENUMS ON}
 type
+  /// <summary>
+  ///   URL scheme for a bind prefix. Shared by the Core and the adapters so a
+  ///   single type expresses <c>http</c> vs <c>https</c>. (A <c>Https</c> bind
+  ///   additionally needs a kernel-delegated certificate registered separately
+  ///   via <c>netsh http add sslcert</c> — standard HTTP.sys; the server only
+  ///   emits the scheme text into the prefix.)
+  /// </summary>
+  TDXScheme = (Http, Https);
+{$SCOPEDENUMS OFF}
+
   TDXUrlPrefix = record
     Prefix:  string;
     Context: HTTP_URL_CONTEXT;
@@ -47,15 +57,21 @@ type
 
   /// <summary>
   ///   The public face of the engine: a kernel-mode HTTP.sys server. Configure
-  ///   the port, worker count and URL prefixes, assign an
+  ///   the worker count and URL prefixes, assign an
   ///   <see cref="IDXHttpSysRequestHandler"/>, then call <c>Start</c>.
   /// </summary>
   /// <remarks>
   ///   Configuration properties may only be changed while the server is stopped.
   ///   After <c>Start</c> the server is thread-safe for reading properties; each
-  ///   request is handled on a worker thread. Use <c>UseLocalhost</c> for a
-  ///   loopback bind that needs no elevated rights, or <c>AddUrlPrefix</c> /
-  ///   <c>UseAllInterfaces</c> for a wildcard bind (requires a URL ACL or admin).
+  ///   request is handled on a worker thread.
+  ///
+  ///   <c>AddUrlPrefix</c> is the single, explicit way to configure where the
+  ///   server binds — it takes a complete URL such as
+  ///   <c>'http://localhost:80/api/'</c> or <c>'https://+:1223/api/'</c>. There is
+  ///   no separate <c>Port</c> property and no hidden host translation: the URL
+  ///   says everything. Use <see cref="BuildPrefix"/> to assemble a complete URL
+  ///   from scheme/host/port/path parts (e.g. from an adapter), then pass the
+  ///   result to <c>AddUrlPrefix</c>.
   /// </remarks>
   TDXHttpSysServer = class
   private
@@ -67,7 +83,6 @@ type
     FHandler:         IDXHttpSysRequestHandler;
     FUrlPrefixes:     TList<TDXUrlPrefix>;
 
-    FPort:            Word;
     FQueueLength:     Cardinal;
     FThreadCount:     Integer;
     FServerHeader:    string;
@@ -77,7 +92,6 @@ type
     procedure CheckNotActive(const AProperty: string);
     procedure SetupUrlGroup;
     procedure TeardownUrlGroup;
-    procedure SetPort(AValue: Word);
     procedure SetQueueLength(AValue: Cardinal);
     procedure SetThreadCount(AValue: Integer);
     procedure SetServerHeader(const AValue: string);
@@ -87,11 +101,6 @@ type
     destructor  Destroy; override;
 
     // --- Configuration (set before Start) ---
-
-    // Listening port (default: 8080)
-    // Only used for automatic prefix generation by UseLocalhost /
-    // UseAllInterfaces when AddUrlPrefix is not called explicitly.
-    property Port:         Word     read FPort         write SetPort;
 
     // Length of the kernel request queue (default: 1000).
     // Configure before Start; takes effect on the next Start. (Live application
@@ -115,7 +124,10 @@ type
 
     // --- URL management ---
 
-    // Adds a URL prefix.
+    // The single, explicit bind mechanism. Takes a COMPLETE prefix, validated at
+    // call time: it must start with 'http://' or 'https://' and end with '/'
+    // (HTTP.sys requires the trailing slash). An invalid shape raises
+    // EDXHttpSysError here, not a cryptic Win32 error at Start.
     // Examples:
     //   'http://+:8080/'         – all interfaces (requires admin/urlacl)
     //   'http://localhost:8080/' – loopback only (no elevated rights)
@@ -124,11 +136,24 @@ type
     procedure RemoveUrlPrefix(const APrefix: string);
     procedure ClearUrlPrefixes;
 
-    // Convenience: adds 'http://localhost:<Port>/'
-    procedure UseLocalhost;
+    // Formats a complete HTTP.sys prefix from its parts (the shared host/scheme
+    // translation used by adapters). It only builds the string; binding still
+    // goes through AddUrlPrefix. Rules:
+    //   scheme   – TDXScheme.Http/Https → 'http'/'https'
+    //   host     – '0.0.0.0' / empty → '+' (wildcard, needs urlacl/admin);
+    //              'localhost' / '127.0.0.1' → 'localhost' (loopback, no rights);
+    //              any other host used verbatim
+    //   path     – normalised to a single leading and trailing '/'
+    // Example: BuildPrefix(Http, 'localhost', 80, '/rest') = 'http://localhost:80/rest/'
+    class function BuildPrefix(AScheme: TDXScheme; const AHost: string;
+      APort: Word; const APath: string): string; static;
 
-    // Convenience: adds 'http://+:<Port>/' (requires elevated rights)
-    procedure UseAllInterfaces;
+    // Formats the actionable message shown when a bind fails with
+    // ERROR_ACCESS_DENIED: it names the exact prefix and the one-time netsh
+    // reservation command to run as Administrator. Exposed as a seam so the test
+    // can assert the message shape without an actual privileged-port bind.
+    class function FormatAccessDeniedMessage(const APrefix: string;
+      AErrorCode: Cardinal): string; static;
 
     // --- Lifecycle ---
 
@@ -153,7 +178,6 @@ uses
 constructor TDXHttpSysServer.Create;
 begin
   inherited;
-  FPort         := 8080;
   FQueueLength  := 1000;
   FThreadCount  := Max(2, System.CPUCount * 2);
   FServerHeader := 'DX.HttpSys/1.0';
@@ -175,12 +199,6 @@ begin
   if FActive then
     raise EDXHttpSysError.CreateWin32(0,
       Format('Property "%s" can only be changed before Start', [AProperty]));
-end;
-
-procedure TDXHttpSysServer.SetPort(AValue: Word);
-begin
-  CheckNotActive('Port');
-  FPort := AValue;
 end;
 
 procedure TDXHttpSysServer.SetThreadCount(AValue: Integer);
@@ -211,8 +229,31 @@ procedure TDXHttpSysServer.AddUrlPrefix(
   const APrefix: string;
   AContext:      HTTP_URL_CONTEXT);
 var
-  Item: TDXUrlPrefix;
+  Item:      TDXUrlPrefix;
+  LHostPart: Integer; // index just past '://'
 begin
+  // Validate the one true bind mechanism so it isn't a raw-string trap: a clear
+  // error here beats a cryptic Win32 error at Start.
+  if APrefix.StartsWith('http://', True) then
+    LHostPart := Length('http://')
+  else if APrefix.StartsWith('https://', True) then
+    LHostPart := Length('https://')
+  else
+    raise EDXHttpSysError.CreateWin32(0,
+      Format('Invalid URL prefix "%s": must start with "http://" or "https://"', [APrefix]));
+
+  // Require a non-empty host after the scheme: 'http:///x/' and 'http://:80/x/'
+  // pass the scheme+slash checks but would still fail cryptically at Start.
+  if (Length(APrefix) <= LHostPart) or
+     CharInSet(APrefix[LHostPart + 1], ['/', ':']) then  // string is 1-based
+    raise EDXHttpSysError.CreateWin32(0,
+      Format('Invalid URL prefix "%s": missing host after the scheme', [APrefix]));
+
+  if not APrefix.EndsWith('/') then
+    raise EDXHttpSysError.CreateWin32(0,
+      Format('Invalid URL prefix "%s": must end with "/" (HTTP.sys requires the trailing slash)',
+        [APrefix]));
+
   Item.Prefix  := APrefix;
   Item.Context := AContext;
   FUrlPrefixes.Add(Item);
@@ -241,14 +282,61 @@ begin
   FUrlPrefixes.Clear;
 end;
 
-procedure TDXHttpSysServer.UseLocalhost;
+class function TDXHttpSysServer.BuildPrefix(AScheme: TDXScheme;
+  const AHost: string; APort: Word; const APath: string): string;
+var
+  LScheme: string;
+  LHost:   string;
+  LPath:   string;
 begin
-  AddUrlPrefix(Format('http://localhost:%d/', [FPort]));
+  case AScheme of
+    TDXScheme.Https: LScheme := 'https';
+  else
+    LScheme := 'http';
+  end;
+
+  // Host translation: wildcard for 0.0.0.0/empty, loopback for localhost/127.0.0.1,
+  // anything else verbatim. Wildcard ('+') needs a urlacl / admin; loopback does not.
+  if (AHost = '') or SameText(AHost, '0.0.0.0') then
+    LHost := '+'
+  else if SameText(AHost, 'localhost') or SameText(AHost, '127.0.0.1') then
+    LHost := 'localhost'
+  else
+    LHost := AHost;
+
+  // Normalise the path to exactly one leading and one trailing '/'.
+  LPath := APath.Trim(['/']);
+  if LPath = '' then
+    LPath := '/'
+  else
+    LPath := '/' + LPath + '/';
+
+  Result := Format('%s://%s:%d%s', [LScheme, LHost, APort, LPath]);
 end;
 
-procedure TDXHttpSysServer.UseAllInterfaces;
+class function TDXHttpSysServer.FormatAccessDeniedMessage(
+  const APrefix: string; AErrorCode: Cardinal): string;
+var
+  LDomain: string;
+  LUser:   string;
+  LWho:    string;
 begin
-  AddUrlPrefix(Format('http://+:%d/', [FPort]));
+  // Build a "DOMAIN\User" hint from the environment; fall back to a placeholder
+  // when the variables are absent (e.g. a service account without USERDOMAIN).
+  LDomain := GetEnvironmentVariable('USERDOMAIN');
+  LUser   := GetEnvironmentVariable('USERNAME');
+  if LUser = '' then
+    LWho := '<DOMAIN\User>'
+  else if LDomain <> '' then
+    LWho := LDomain + '\' + LUser
+  else
+    LWho := LUser;
+
+  Result := Format(
+    '[DX.HttpSys] Cannot bind ''%s'' – access denied (Win32 Error %d).'#13#10 +
+    'This URL needs a one-time reservation. Run as Administrator:'#13#10 +
+    '  netsh http add urlacl url=%s user=%s',
+    [APrefix, AErrorCode, APrefix, LWho]);
 end;
 
 // --- SetupUrlGroup / TeardownUrlGroup ---
@@ -257,6 +345,7 @@ procedure TDXHttpSysServer.SetupUrlGroup;
 var
   BindingInfo: HTTP_BINDING_INFO;
   Item:        TDXUrlPrefix;
+  LResult:     ULONG;
 begin
   // Server session
   TDXHttpSysApi.CheckResult(
@@ -303,11 +392,19 @@ begin
       SizeOf(BindingInfo)),
     'SetUrlGroupProperty (Binding)');
 
-  // Register URL prefixes
+  // Register URL prefixes. On ERROR_ACCESS_DENIED raise an actionable error that
+  // names the exact prefix and the netsh reservation command; other codes keep
+  // the generic CheckResult message (no netsh noise).
   for Item in FUrlPrefixes do
-    TDXHttpSysApi.CheckResult(
-      FApi.AddUrlToUrlGroup(FUrlGroupId, PWideChar(Item.Prefix), Item.Context, 0),
-      'AddUrlToUrlGroup: ' + Item.Prefix);
+  begin
+    LResult := FApi.AddUrlToUrlGroup(FUrlGroupId, PWideChar(Item.Prefix), Item.Context, 0);
+    if LResult = ERROR_ACCESS_DENIED then
+      // Pass AErrorCode=0 so CreateWin32 uses our message verbatim; the formatted
+      // text already names "Win32 Error 5" and the netsh command.
+      raise EDXHttpSysError.CreateWin32(0,
+        FormatAccessDeniedMessage(Item.Prefix, LResult));
+    TDXHttpSysApi.CheckResult(LResult, 'AddUrlToUrlGroup: ' + Item.Prefix);
+  end;
 end;
 
 procedure TDXHttpSysServer.TeardownUrlGroup;

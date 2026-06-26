@@ -166,10 +166,9 @@ begin
 
   LServer := TDXHttpSysServer.Create;
   try
-    LServer.Port := LPort;
     LServer.ThreadCount := 8;
     LServer.Handler := TProcHandler.Create;
-    LServer.UseLocalhost;
+    LServer.AddUrlPrefix(LBaseUrl);
     LServer.Start;
 
     // Warm up: let allocators and the thread pool reach steady state before

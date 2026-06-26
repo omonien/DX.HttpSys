@@ -166,8 +166,10 @@ THorse.Get('/ping',
     ARes.Send('pong');
   end);
 
-// Start through this provider instead of Horse's default Indy provider:
-THorseProviderHttpSys<THorse>.Listen(9000);
+// Start through this provider instead of Horse's default Indy provider.
+// Host/Scheme default to localhost/Http (admin-free); set them for '+' / https.
+THorseProviderHttpSys<THorse>.Port := 8080;
+THorseProviderHttpSys<THorse>.Listen;
 ```
 
 > ℹ️ Define routes with `THorse` as usual; only the `Listen` call changes. Horse is

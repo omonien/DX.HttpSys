@@ -337,6 +337,53 @@ past the buffer. Never alias an `HTTP_RESPONSE`/`HTTP_REQUEST` to V1 when the qu
 `HttpResponse_IsV2Sized` in the standard suite. (This is the response-side twin of A-2's "always
 zero-initialise what the kernel reads".)
 
+### A-20 — `AddUrlPrefix(complete-URL)` is the single bind mechanism; `Port` / `UseLocalhost` / `UseAllInterfaces` removed (breaking)
+**Decision:** The Core configures where the server binds in exactly one explicit way:
+`AddUrlPrefix(const APrefix: string)`, taking a **complete** URL (e.g.
+`'http://localhost:80/standalone/'`, `'https://+:1223/api/'`). The vague `Port` property and the
+`UseLocalhost` / `UseAllInterfaces` convenience methods are **removed** from `TDXHttpSysServer`.
+`AddUrlPrefix` now validates the prefix shape at call time — it must start with `http://` / `https://`
+and end with `/` (HTTP.sys requires the trailing slash) — raising `EDXHttpSysError` immediately
+instead of a cryptic Win32 error at `Start`.
+
+Adapters assemble their own complete URL from three building blocks and pass the finished string to
+`AddUrlPrefix`. The host/scheme→string translation is shared (DRY) via one Core formatter,
+`TDXHttpSysServer.BuildPrefix(AScheme, AHost, APort, APath)` — it only formats the string;
+`AddUrlPrefix` stays the only binder. The three building blocks an adapter owns:
+- **Scheme** — the scoped enum `TDXScheme = (Http, Https)`, declared in the Core so adapters and
+  consumers share one type (default `Http`).
+- **Host** — a string (default `localhost`); `0.0.0.0`/empty → `+` (wildcard), `localhost`/`127.0.0.1`
+  → `localhost`, anything else verbatim.
+- **Path** — owned by the framework (WiRL engine `BasePath`; Horse provider `BasePath`; the Standalone
+  demo sets it directly on HTTP.sys).
+
+This is how a consumer chooses `+` / an IP / `https`: set the adapter's `Host` / `Scheme` before start.
+The default (`Http` + `localhost`) keeps the demos admin-free.
+
+**Port sharing (single source of truth):** all four demos bind under a distinct path prefix on the
+shared port 80 (`/standalone`, `/rest`, `/webbroker`, `/horse`), so they run simultaneously —
+HTTP.sys routes by longest-prefix match across processes. The path is configured in exactly one place
+(the framework) and the adapter reads it to build the prefix; no path stripping (HTTP.sys passes the
+full path through and the framework routes on it). Only the Standalone demo, which has no framework,
+sets the path directly at the HTTP.sys level.
+
+**Actionable bind error:** when `AddUrlToUrlGroup` fails with `ERROR_ACCESS_DENIED` (5), the Core
+(`SetupUrlGroup`) raises an error naming the exact prefix and the one-time
+`netsh http add urlacl url=… user=DOMAIN\User` reservation to run as Administrator. Other error codes
+keep the generic message (no netsh noise). Central in the Core, so every adapter and consumer benefits
+without duplication. The message is formatted by the `FormatAccessDeniedMessage` seam so the test
+asserts the shape without an actual privileged-port bind.
+
+**Why:** `Port` was a second source of truth — consulted only by the convenience methods and silently
+ignored when `AddUrlPrefix` was called directly (a real trap); `UseLocalhost` / `UseAllInterfaces` hid
+the host translation, the scheme, the port and the trailing `/`. One explicit, validated mechanism with
+a shared formatter removes the magic while keeping the host/scheme logic in one place.
+
+**How to apply:** Configure binds via `AddUrlPrefix` with a complete URL; build that URL from parts with
+`BuildPrefix`. Guarded by the `Test.DX.HttpSys.Url` fixture (`BuildPrefix` scheme/host/path,
+`AddUrlPrefix` validation, the access-denied message). Deferred (YAGNI): a generic per-framework
+`BasePath` abstraction; netsh guidance for non-access-denied errors; `+:80` in the demos.
+
 <!-- New architecture decisions are appended below. -->
 
 ---

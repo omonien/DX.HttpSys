@@ -6,12 +6,17 @@
 ///   WebModule with actions as usual, then host it with
 ///   TWebBrokerHttpSysDispatcher instead of the Indy/ISAPI bridge.
 ///
-///   Routes:
-///     GET /            -> greeting
-///     GET /time        -> current server time
+///   Binds under /webbroker/ on the shared port 80, so it runs simultaneously
+///   with the Standalone (/standalone), WiRL (/rest) and Horse (/horse) demos.
+///   The dispatcher passes the full path through, so the WebModule actions are
+///   registered under that same /webbroker/ prefix.
 ///
-///   localhost needs no elevated rights. For http://+:PORT/ use netsh or run
-///   elevated (see README).
+///   Routes:
+///     GET /webbroker/       -> greeting
+///     GET /webbroker/time   -> current server time
+///
+///   localhost needs no elevated rights. For http://+:80/webbroker/ use netsh or
+///   run elevated (see README).
 /// </remarks>
 /// <author>Olaf Monien</author>
 /// <created>2026-06-19</created>
@@ -53,13 +58,13 @@ begin
 
   LRoot := Actions.Add;
   LRoot.Name := 'Root';
-  LRoot.PathInfo := '/';
+  LRoot.PathInfo := '/webbroker/';
   LRoot.Default := True;
   LRoot.OnAction := RootAction;
 
   LTime := Actions.Add;
   LTime.Name := 'Time';
-  LTime.PathInfo := '/time';
+  LTime.PathInfo := '/webbroker/time';
   LTime.OnAction := TimeAction;
 end;
 
@@ -69,7 +74,7 @@ begin
   Response.ContentType := 'text/plain; charset=utf-8';
   Response.Content :=
     'WebBroker over DX.HttpSys'#10 +
-    'Try GET /time'#10;
+    'Try GET /webbroker/time'#10;
   Handled := True;
 end;
 
@@ -90,7 +95,7 @@ begin
 end;
 
 const
-  cPort = 8080;
+  cPrefix = 'http://localhost:80/webbroker/';
 
 var
   LServer: TDXHttpSysServer;
@@ -102,13 +107,12 @@ begin
 
     LServer := TDXHttpSysServer.Create;
     try
-      LServer.Port := cPort;
       LServer.Handler := TWebBrokerHttpSysDispatcher.Create;
-      LServer.UseLocalhost;
+      LServer.AddUrlPrefix(cPrefix);
       LServer.Start;
 
-      Writeln(Format('WebBroker demo on http://localhost:%d/', [cPort]));
-      Writeln('Try:  curl http://localhost:' + IntToStr(cPort) + '/time');
+      Writeln('WebBroker demo on ' + cPrefix);
+      Writeln('Try:  curl ' + cPrefix + 'time');
       Writeln('Press <Enter> to stop.');
       Readln;
 

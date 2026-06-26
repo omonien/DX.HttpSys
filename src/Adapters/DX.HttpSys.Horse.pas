@@ -51,11 +51,13 @@ type
 
   THorseProviderHttpSys<T: class> = class(THorseProviderAbstract<T>)
   private
-    class var FPort:    Integer;
-    class var FHost:    string;
-    class var FRunning: Boolean;
-    class var FEvent:   TEvent;
-    class var FServer:  TDXHttpSysServer;  // the single HTTP.sys listener
+    class var FPort:     Integer;  // Horse provider API contract (Listen takes Integer)
+    class var FHost:     string;
+    class var FScheme:   TDXScheme;
+    class var FBasePath: string;
+    class var FRunning:  Boolean;
+    class var FEvent:    TEvent;
+    class var FServer:   TDXHttpSysServer;  // the single HTTP.sys listener
 
     class function GetDefaultEvent: TEvent;
     class function GetDefaultPort: Integer; static;
@@ -64,12 +66,23 @@ type
     class procedure SetPort(const AValue: Integer); static;
     class function GetHost: string; static;
     class procedure SetHost(const AValue: string); static;
+    class function GetScheme: TDXScheme; static;
+    class procedure SetScheme(const AValue: TDXScheme); static;
+    class function GetBasePath: string; static;
+    class procedure SetBasePath(const AValue: string); static;
 
     class procedure InternalListen; virtual;
     class procedure InternalStopListen; virtual;
   public
     class property Host: string  read GetHost write SetHost;
     class property Port: Integer read GetPort write SetPort;
+
+    // The URL scheme (default Http) and the HTTP.sys path segment. Horse has no
+    // base-path concept, so BasePath drives the prefix and the user registers
+    // routes under that same segment (e.g. BasePath='horse' + Get('/horse/...')).
+    // Set both before Listen. https additionally needs an sslcert (netsh).
+    class property Scheme:   TDXScheme read GetScheme   write SetScheme;
+    class property BasePath: string    read GetBasePath write SetBasePath;
 
     class procedure Listen; overload; override;
     class procedure StopListen; override;
@@ -138,6 +151,26 @@ begin
   FHost := AValue.Trim;
 end;
 
+class function THorseProviderHttpSys<T>.GetScheme: TDXScheme;
+begin
+  Result := FScheme;
+end;
+
+class procedure THorseProviderHttpSys<T>.SetScheme(const AValue: TDXScheme);
+begin
+  FScheme := AValue;
+end;
+
+class function THorseProviderHttpSys<T>.GetBasePath: string;
+begin
+  Result := FBasePath;
+end;
+
+class procedure THorseProviderHttpSys<T>.SetBasePath(const AValue: string);
+begin
+  FBasePath := AValue.Trim;
+end;
+
 class function THorseProviderHttpSys<T>.IsRunning: Boolean;
 begin
   Result := FRunning;
@@ -152,8 +185,12 @@ begin
   inherited;
   if FPort <= 0 then
     FPort := GetDefaultPort;
+  // Default to loopback (admin-free), matching the WiRL adapter and the spec's
+  // "Host default localhost". Horse's own GetDefaultHost is '0.0.0.0', which
+  // BuildPrefix maps to the '+' wildcard (needs urlacl/admin) — not the
+  // admin-free default the README advertises. Set Host explicitly for '+'/an IP.
   if FHost.IsEmpty then
-    FHost := GetDefaultHost;
+    FHost := 'localhost';
 
   if FServer <> nil then
     raise Exception.Create('Horse (HTTP.sys) is already listening');
@@ -165,14 +202,13 @@ begin
   FServer := TDXHttpSysServer.Create;
   try
     FServer.Handler := TWebBrokerHttpSysDispatcher.Create;
-    // A loopback host needs no URL ACL; any other host binds the wildcard
-    // ("http://+:port/"), which requires elevated rights / a urlacl reservation.
-    if SameText(FHost, 'localhost') or SameText(FHost, '127.0.0.1') then
-      FServer.AddUrlPrefix(Format('http://localhost:%d/', [FPort]))
-    else if SameText(FHost, GetDefaultHost) then
-      FServer.AddUrlPrefix(Format('http://+:%d/', [FPort]))
-    else
-      FServer.AddUrlPrefix(Format('http://%s:%d/', [FHost, FPort]));
+    // Build the prefix through the shared Core formatter (host/scheme logic lives
+    // in exactly one place, shared with WiRL): loopback needs no urlacl, the
+    // wildcard ('+') does. BasePath is the path segment routes are registered under.
+    // FPort is Integer (Horse API contract) but a port is a Word; the cast is
+    // explicit so the narrowing is intentional, not a silent implicit conversion.
+    FServer.AddUrlPrefix(
+      TDXHttpSysServer.BuildPrefix(FScheme, FHost, Word(FPort), FBasePath));
     FServer.Start;
   except
     FreeAndNil(FServer);
