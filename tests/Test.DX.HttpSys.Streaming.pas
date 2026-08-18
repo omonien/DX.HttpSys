@@ -75,6 +75,13 @@ type
     // returns promptly.
     [Test]
     procedure StopDuringStream_ReturnsPromptly;
+
+    // The disconnect contract: a client that aborts mid-stream must surface as
+    // SendChunk = False in the handler and must NOT be reported as a server
+    // error (regression: ERROR_CONNECTION_ABORTED/RESET were misclassified as
+    // genuine failures, producing spurious worker error reports).
+    [Test]
+    procedure ClientDisconnectMidStream_EndsCleanly;
   end;
 
 implementation
@@ -172,6 +179,9 @@ begin
 end;
 
 // Picks a free TCP port by binding to port 0 and reading back the assignment.
+// Another process could still take the port between the probe and the HTTP.sys
+// bind, so these tests must run sequentially (DUnitX does) — same caveat as
+// Test.DX.HttpSys.Server.
 function FindFreePort: Word;
 var
   LData: TWSAData;
@@ -261,6 +271,59 @@ end;
 function Utf8Chunk(const AText: string): TBytes;
 begin
   Result := TEncoding.UTF8.GetBytes(AText);
+end;
+
+// Opens a raw socket to the streaming endpoint, reads until the stream started
+// (headers + first chunk), then aborts the connection with a hard close (RST).
+// The server side must then observe SendChunk = False — not a server error.
+procedure AbortSseConnection(APort: Word);
+var
+  LData:    TWSAData;
+  LSock:    TSocket;
+  LAddr:    TSockAddrIn;
+  LLinger:  TLinger;
+  LTimeout: Integer;
+  LRequest: string;
+  LBytes:   TBytes;
+  LBuffer:  array[0..1023] of Byte;
+  LLen:     Integer;
+begin
+  Assert.IsTrue(WSAStartup($0202, LData) = 0, 'WSAStartup failed');
+  try
+    LSock := socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    Assert.IsTrue(LSock <> INVALID_SOCKET, 'socket failed');
+    try
+      LTimeout := 5000;
+      setsockopt(LSock, SOL_SOCKET, SO_RCVTIMEO, @LTimeout, SizeOf(LTimeout));
+
+      FillChar(LAddr, SizeOf(LAddr), 0);
+      LAddr.sin_family      := AF_INET;
+      LAddr.sin_addr.S_addr := htonl(INADDR_LOOPBACK);
+      LAddr.sin_port        := htons(APort);
+      Assert.IsTrue(connect(LSock, TSockAddr(LAddr), SizeOf(LAddr)) = 0,
+        'connect failed');
+
+      LRequest := 'GET / HTTP/1.1'#13#10 +
+        'Host: localhost:' + IntToStr(APort) + #13#10 +
+        'Connection: keep-alive'#13#10#13#10;
+      LBytes := TEncoding.UTF8.GetBytes(LRequest);
+      Assert.IsTrue(send(LSock, PAnsiChar(@LBytes[0]), Length(LBytes), 0) > 0,
+        'send failed');
+
+      // Wait until the stream actually started, then abort with RST so the
+      // server observes a hard disconnect (not a graceful close).
+      LLen := recv(LSock, PAnsiChar(@LBuffer[0]), SizeOf(LBuffer), 0);
+      Assert.IsTrue(LLen > 0, 'no data received from the stream');
+
+      LLinger.l_onoff  := 1;
+      LLinger.l_linger := 0;
+      setsockopt(LSock, SOL_SOCKET, SO_LINGER, @LLinger, SizeOf(LLinger));
+    finally
+      closesocket(LSock);
+    end;
+  finally
+    WSACleanup;
+  end;
 end;
 
 // -----------------------------------------------------------------------------
@@ -689,7 +752,13 @@ begin
           Format('Stop took %d ms - cancellation did not interrupt the stream',
             [LWatch.ElapsedMilliseconds]));
       finally
-        LClientRun.WaitFor;
+        // Bound the join: the client may only finish once the server closed
+        // the queue; if it does not within the budget, the test must not hang.
+        var LClientWatch := TStopwatch.StartNew;
+        while (not LClientRun.Finished)
+          and (LClientWatch.ElapsedMilliseconds < cStopBudgetMs) do
+          Sleep(10);
+        Assert.IsTrue(LClientRun.Finished, 'client did not end after server stop');
         LClientRun.Free;
       end;
     finally
@@ -697,6 +766,67 @@ begin
     end;
   finally
     LStarted.Free;
+  end;
+end;
+
+procedure TStreamingIntegrationTests.ClientDisconnectMidStream_EndsCleanly;
+const
+  cBudgetMs = 5000;
+var
+  LPort:           Word;
+  LServer:         TDXHttpSysServer;
+  LErrors:         TErrorCollector;
+  LStarted:        TSimpleEvent;
+  LDisconnectSeen: TSimpleEvent;
+  LHandlerDone:    TSimpleEvent;
+begin
+  LPort := FindFreePort;
+  Assert.IsTrue(LPort > 0);
+
+  LErrors := TErrorCollector.Create;
+  LStarted := TSimpleEvent.Create;
+  LDisconnectSeen := TSimpleEvent.Create;
+  LHandlerDone := TSimpleEvent.Create;
+  try
+    LServer := StartServer(LPort,
+      TProcHandler.Create(
+        procedure(AReq: TDXHttpSysRequest; AResp: TDXHttpSysResponse)
+        begin
+          try
+            AResp.BeginStream;
+            AResp.SendChunk(Utf8Chunk('first'));
+            LStarted.SetEvent;
+            while AResp.SendChunk(Utf8Chunk('keepalive')) do
+            begin
+              if AResp.Cancelled then
+                Break;
+              Sleep(10);
+            end;
+            if not AResp.Cancelled then
+              LDisconnectSeen.SetEvent; // SendChunk ended by disconnect, not shutdown
+          finally
+            AResp.EndStream; // no-op after a disconnect
+            LHandlerDone.SetEvent;
+          end;
+        end), LErrors.Report);
+    try
+      Assert.IsTrue(LStarted.WaitFor(cBudgetMs) = TWaitResult.wrSignaled,
+        'stream did not start');
+      AbortSseConnection(LPort);
+      Assert.IsTrue(LDisconnectSeen.WaitFor(cBudgetMs) = TWaitResult.wrSignaled,
+        'handler did not observe the client disconnect');
+      Assert.IsTrue(LHandlerDone.WaitFor(cBudgetMs) = TWaitResult.wrSignaled,
+        'handler did not finish after the disconnect');
+      Assert.AreEqual('', LErrors.Text,
+        'a client disconnect must not be reported as a server error');
+    finally
+      LServer.Free;
+    end;
+  finally
+    LHandlerDone.Free;
+    LDisconnectSeen.Free;
+    LStarted.Free;
+    LErrors.Free;
   end;
 end;
 
