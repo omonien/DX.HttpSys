@@ -25,6 +25,8 @@ program WebBrokerDemo;
 
 {$APPTYPE CONSOLE}
 
+{$R *.res}
+
 uses
   System.SysUtils,
   System.Classes,

@@ -9,7 +9,10 @@
     </Projects>
     <!-- DX.HttpSys.WiRL is intentionally NOT in the build group: WiRL is an
          external dependency that is not vendored here. Add it to a local group
-         once WiRL is on the library path. See docs/DECISIONS.md (A-10). -->
+         once WiRL is on the library path. See docs/DECISIONS.md (A-10). The
+         same applies to the WiRL and Horse demos (demo\02.WiRL, demo\04.Horse):
+         they are source-only showcases without .dproj files and are built via
+         the optional integration harness (tests-integration\) instead. -->
     <Projects Include="src\DX.HttpSys.WebBroker.dproj">
       <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
     </Projects>
@@ -20,6 +23,9 @@
       <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
     </Projects>
     <Projects Include="demo\03.WebBroker\WebBrokerDemo.dproj">
+      <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
+    </Projects>
+    <Projects Include="demo\07.Sse\SseDemo.dproj">
       <Dependencies>src\DX.HttpSys.Core.dproj</Dependencies>
     </Projects>
   </ItemGroup>
