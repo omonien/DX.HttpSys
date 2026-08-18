@@ -7,7 +7,9 @@
 ///
 ///   Important:
 ///     - Send() may only be called once.
-///     - After Send(), no further property changes are possible.
+///     - After Send() (or BeginStream()), no further property changes are possible.
+///     - Streaming responses: BeginStream, then SendChunk repeatedly, then
+///       EndStream. A stream the handler abandons is completed by the worker.
 ///     - Instances are NOT thread-safe; use them only on the owning worker thread.
 /// </remarks>
 /// <author>Olaf Monien</author>
@@ -26,10 +28,28 @@ uses
   DX.HttpSys.Request;
 
 type
+{$SCOPEDENUMS ON}
+  /// <summary>
+  ///   Lifecycle state of a response. <c>NotSent</c> until headers went out,
+  ///   <c>Streaming</c> between a successful <c>BeginStream</c> and the end of
+  ///   the stream, <c>Sent</c> once the response is complete.
+  /// </summary>
+  TDXHttpSysResponseState = (NotSent, Streaming, Sent);
+{$SCOPEDENUMS OFF}
+
+  /// <summary>
+  ///   Queried by <see cref="TDXHttpSysResponse.Cancelled"/>. Injected by the
+  ///   worker thread so handlers can observe server shutdown without the
+  ///   response depending on the thread-pool unit.
+  /// </summary>
+  TDXHttpSysQueryCancelled = function: Boolean of object;
+
   /// <summary>
   ///   The outgoing HTTP response. Set <c>StatusCode</c>, headers and body (via
   ///   <c>SetBody</c>/<c>SetJsonBody</c> or by writing to <c>Body</c>), then call
-  ///   <c>Send</c>. <c>Send</c> may be called only once.
+  ///   <c>Send</c>. <c>Send</c> may be called only once. Alternatively start a
+  ///   chunked streaming response with <c>BeginStream</c>/<c>SendChunk</c>/
+  ///   <c>EndStream</c> (e.g. for Server-Sent Events).
   /// </summary>
   /// <remarks>Not thread-safe — use only on the owning worker thread.</remarks>
   TDXHttpSysResponse = class
@@ -41,8 +61,8 @@ type
     FReasonPhrase: AnsiString;
     FHeaders:      TDXHttpHeaders;
     FBody:         TMemoryStream;
-    FSent:         Boolean;
-    FStreaming:    Boolean;
+    FState:        TDXHttpSysResponseState;
+    FOnQueryCancelled: TDXHttpSysQueryCancelled;
 
     // Buffers that must outlive the HttpSendHttpResponse call: the response
     // struct holds raw pointers into these, so they are instance fields kept
@@ -54,6 +74,9 @@ type
     procedure SetStatusCode(AValue: Word);
     function  GetReasonPhrase: string;
     procedure SetReasonPhrase(const AValue: string);
+    function  GetSent: Boolean;
+    function  GetStreaming: Boolean;
+    function  GetCancelled: Boolean;
     procedure CheckNotSent;
     // Maps a header name to its known HTTP.sys response header index, or -1 if
     // the header is not a known response header and must travel as "unknown".
@@ -64,6 +87,21 @@ type
       ABodyLength: ULONG;
       out ARawResp: HTTP_RESPONSE;
       out AChunk:   HTTP_DATA_CHUNK);
+    // Wraps a memory buffer into an HTTP_DATA_CHUNK (the single place that
+    // knows the chunk layout — used for the Send body and for SendChunk).
+    class function BuildDataChunk(AData: Pointer; ALength: ULONG): HTTP_DATA_CHUNK; static;
+    // Shared HttpSendHttpResponse call for Send (AFlags=0, with body) and
+    // BeginStream (MORE_DATA, no body). Raises via CheckResult on failure.
+    procedure SendHeaders(AFlags: ULONG; ABodyData: Pointer; ABodyLength: ULONG;
+      const AContext: string);
+    // Shared HttpSendResponseEntityBody call for SendChunk and EndStream.
+    // Returns the raw Win32 result; the callers decide how to treat it.
+    function SendEntityBody(AFlags: ULONG; AChunkCount: USHORT;
+      AChunks: PHTTP_DATA_CHUNK): ULONG;
+    // True for result codes that mean "this connection/stream is gone" (client
+    // disconnect or queue closed during shutdown) as opposed to a genuine
+    // failure of the call itself.
+    class function IsStreamOverError(ACode: ULONG): Boolean; static;
   public
     constructor Create(
       const AApi:        TDXHttpSysApi;
@@ -100,29 +138,49 @@ type
     // Sends a simple error response (no body required)
     procedure SendError(AStatusCode: Word; const AReason: string = '');
 
-    // True after a successful Send()
-    property Sent: Boolean read FSent;
+    // True once the response is complete (single-shot Send finished, or a
+    // streaming response ended). False while a stream is still in progress.
+    property Sent: Boolean read GetSent;
+
+    // The lifecycle state (NotSent / Streaming / Sent).
+    property State: TDXHttpSysResponseState read FState;
 
     // ------------------------------------------------------------------
     // Streaming (chunked transfer encoding, e.g. Server-Sent Events)
     // ------------------------------------------------------------------
 
     // Starts a streaming response: sends the headers without Content-Length so
-    // HTTP.sys uses chunked transfer encoding for HTTP/1.1 clients. Marks the
-    // response as sent, so the worker will not send again. Must NOT have a
-    // Content-Length header set; the caller sets Content-Type etc. via Headers.
+    // HTTP.sys uses chunked transfer encoding for HTTP/1.1 clients. Requires an
+    // empty Body and no Content-Length header; the caller sets Content-Type
+    // etc. via Headers. On success State becomes Streaming; if the underlying
+    // send fails, the state stays NotSent (an error response is still possible).
     procedure BeginStream;
 
-    // Sends one chunk of a streaming response. Returns False when the client
-    // disconnected (the stream is then considered ended). Requires BeginStream.
+    // Sends one chunk of a streaming response. Returns False when the stream is
+    // over — the client disconnected or the server is shutting down (see
+    // Cancelled); the handler should then simply return. Raises EDXHttpSysError
+    // for genuine failures (they never masquerade as a disconnect). Requires
+    // BeginStream.
     function SendChunk(const AData: TBytes): Boolean;
 
-    // Completes a streaming response (no more data follows). Requires
-    // BeginStream; a no-op once the stream already ended (disconnect).
+    // Completes a streaming response (no more data follows). A no-op unless the
+    // response is currently streaming, so it is safe to call unconditionally
+    // after a send loop. A client disconnect during this call is treated as a
+    // normal end of the stream, not an error.
     procedure EndStream;
 
     // True while a streaming response is in progress.
-    property Streaming: Boolean read FStreaming;
+    property Streaming: Boolean read GetStreaming;
+
+    // True once the server is shutting down (or this worker is asked to stop).
+    // Long-running handlers — streaming or not — should poll this in their
+    // loops and return promptly when it turns True. SendChunk checks it and
+    // reports the stream as over. Wired up by the worker thread.
+    property Cancelled: Boolean read GetCancelled;
+
+    // Injected by the worker thread; see Cancelled.
+    property OnQueryCancelled: TDXHttpSysQueryCancelled
+      read FOnQueryCancelled write FOnQueryCancelled;
   end;
 
 implementation
@@ -182,7 +240,7 @@ begin
   FReasonPhrase := DefaultReasonPhrase(200);
   FHeaders      := TDXHttpHeaders.Create;
   FBody         := TMemoryStream.Create;
-  FSent         := False;
+  FState        := TDXHttpSysResponseState.NotSent;
 end;
 
 destructor TDXHttpSysResponse.Destroy;
@@ -210,9 +268,24 @@ begin
   FReasonPhrase := AnsiString(AValue);
 end;
 
+function TDXHttpSysResponse.GetSent: Boolean;
+begin
+  Result := FState = TDXHttpSysResponseState.Sent;
+end;
+
+function TDXHttpSysResponse.GetStreaming: Boolean;
+begin
+  Result := FState = TDXHttpSysResponseState.Streaming;
+end;
+
+function TDXHttpSysResponse.GetCancelled: Boolean;
+begin
+  Result := Assigned(FOnQueryCancelled) and FOnQueryCancelled();
+end;
+
 procedure TDXHttpSysResponse.CheckNotSent;
 begin
-  if FSent then
+  if FState <> TDXHttpSysResponseState.NotSent then
     raise EDXHttpSysError.CreateWin32(0, 'Response has already been sent (Send may only be called once)');
 end;
 
@@ -348,57 +421,126 @@ begin
   // Body chunk
   if (ABodyData <> nil) and (ABodyLength > 0) then
   begin
-    FillChar(AChunk, SizeOf(AChunk), 0);
-    AChunk.DataChunkType            := HttpDataChunkFromMemory;
-    AChunk.FromMemory.pBuffer       := ABodyData;
-    AChunk.FromMemory.BufferLength  := ABodyLength;
+    AChunk := BuildDataChunk(ABodyData, ABodyLength);
     ARawResp.EntityChunkCount := 1;
     ARawResp.pEntityChunks    := @AChunk;
   end;
 end;
 
+class function TDXHttpSysResponse.BuildDataChunk(AData: Pointer;
+  ALength: ULONG): HTTP_DATA_CHUNK;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.DataChunkType           := HttpDataChunkFromMemory;
+  Result.FromMemory.pBuffer      := AData;
+  Result.FromMemory.BufferLength := ALength;
+end;
+
+procedure TDXHttpSysResponse.SendHeaders(AFlags: ULONG; ABodyData: Pointer;
+  ABodyLength: ULONG; const AContext: string);
+var
+  LRawResp:   HTTP_RESPONSE;
+  LChunk:     HTTP_DATA_CHUNK;
+  LBytesSent: ULONG;
+  LResult:    ULONG;
+begin
+  // LChunk is referenced by LRawResp.pEntityChunks (body case only) and must
+  // stay alive for the duration of the synchronous call.
+  BuildHttpResponse(ABodyData, ABodyLength, LRawResp, LChunk);
+
+  LBytesSent := 0;
+  LResult := FApi.SendHttpResponse(
+    FQueueHandle,
+    FRequestId,
+    AFlags,
+    @LRawResp,
+    nil,           // pCachePolicy
+    @LBytesSent,
+    nil,           // pReserved1
+    0,             // Reserved2
+    nil,           // pOverlapped (synchronous)
+    nil);          // pLogData
+
+  TDXHttpSysApi.CheckResult(LResult, AContext);
+end;
+
+function TDXHttpSysResponse.SendEntityBody(AFlags: ULONG; AChunkCount: USHORT;
+  AChunks: PHTTP_DATA_CHUNK): ULONG;
+var
+  LBytesSent: ULONG;
+begin
+  LBytesSent := 0;
+  Result := FApi.SendResponseEntityBody(
+    FQueueHandle,
+    FRequestId,
+    AFlags,
+    AChunkCount,
+    AChunks,
+    @LBytesSent,
+    nil,           // pReserved1
+    0,             // Reserved2
+    nil,           // pOverlapped (synchronous)
+    nil);          // pLogData
+end;
+
+class function TDXHttpSysResponse.IsStreamOverError(ACode: ULONG): Boolean;
+begin
+  // "The connection/stream is gone" — the client disconnected
+  // (CONNECTION_INVALID / NETNAME_DELETED / CONNECTION_ABORTED /
+  // CONNECTION_RESET) or the request queue was closed or the I/O aborted
+  // during server shutdown (INVALID_HANDLE / OPERATION_ABORTED).
+  // Everything else is a genuine failure of the call itself.
+  Result := (ACode = ERROR_CONNECTION_INVALID)
+    or (ACode = ERROR_NETNAME_DELETED)
+    or (ACode = ERROR_CONNECTION_ABORTED)
+    or (ACode = ERROR_CONNECTION_RESET)
+    or (ACode = ERROR_INVALID_HANDLE)
+    or (ACode = ERROR_OPERATION_ABORTED);
+end;
+
 procedure TDXHttpSysResponse.Send;
 var
-  RawResp:    HTTP_RESPONSE;
-  Chunk:      HTTP_DATA_CHUNK;
-  BodyData:   Pointer;
-  BodyLength: ULONG;
-  BytesSent:  ULONG;
-  Result_:    ULONG;
+  LBodyData:   Pointer;
+  LBodyLength: ULONG;
 begin
   CheckNotSent;
-  FSent := True;
 
   // Prepare body data
-  BodyLength := FBody.Size;
-  if BodyLength > 0 then
+  LBodyLength := FBody.Size;
+  if LBodyLength > 0 then
   begin
     FBody.Position := 0;
-    BodyData := FBody.Memory;
+    LBodyData := FBody.Memory;
 
     // Set Content-Length if not explicitly provided
     if not FHeaders.HasHeader('content-length') then
-      FHeaders['content-length'] := IntToStr(BodyLength);
+      FHeaders['content-length'] := IntToStr(LBodyLength);
   end
   else
-    BodyData := nil;
+    LBodyData := nil;
 
-  BuildHttpResponse(BodyData, BodyLength, RawResp, Chunk);
+  try
+    SendHeaders(0, LBodyData, LBodyLength, 'HttpSendHttpResponse');
+  except
+    on E: EDXHttpSysError do
+    begin
+      // The client hung up while we were answering. Same contract as the
+      // streaming path: a dead client is the normal end, not a server error.
+      // Mark the response as sent so the worker does not attempt a 500 on a
+      // connection that is already gone (which would only produce a second,
+      // misleading error report).
+      if IsStreamOverError(E.ErrorCode) then
+      begin
+        FState := TDXHttpSysResponseState.Sent;
+        Exit;
+      end;
+      raise;
+    end;
+  end;
 
-  BytesSent := 0;
-  Result_ := FApi.SendHttpResponse(
-    FQueueHandle,
-    FRequestId,
-    0,           // Flags
-    @RawResp,
-    nil,         // pCachePolicy
-    @BytesSent,
-    nil,         // pReserved1
-    0,           // Reserved2
-    nil,         // pOverlapped (synchron)
-    nil);        // pLogData
-
-  TDXHttpSysApi.CheckResult(Result_, 'HttpSendHttpResponse');
+  // Mark as sent only after the call succeeded: a genuine failed Send leaves
+  // the state NotSent, so the worker's error path can still answer with 500.
+  FState := TDXHttpSysResponseState.Sent;
 end;
 
 procedure TDXHttpSysResponse.SendError(AStatusCode: Word; const AReason: string);
@@ -411,102 +553,83 @@ begin
 end;
 
 procedure TDXHttpSysResponse.BeginStream;
-var
-  RawResp:   HTTP_RESPONSE;
-  Chunk:     HTTP_DATA_CHUNK;
-  BytesSent: ULONG;
-  Result_:   ULONG;
 begin
   CheckNotSent;
   if not Assigned(FApi.SendResponseEntityBody) then
-    raise EOSError.Create(
-      'HttpSendResponseEntityBody is not available (httpapi.dll v2 required).');
+    raise EDXHttpSysError.CreateWin32(0,
+      'BeginStream: HttpSendResponseEntityBody is not available (httpapi.dll v2 required)');
   if FHeaders.HasHeader('content-length') then
-    raise EInvalidOperation.Create(
-      'BeginStream: a streaming response must not carry a Content-Length header.');
-
-  FSent     := True;   // the worker must not auto-send after HandleRequest
-  FStreaming := True;
+    raise EDXHttpSysError.CreateWin32(0,
+      'BeginStream: a streaming response must not carry a Content-Length header');
+  if FBody.Size > 0 then
+    raise EDXHttpSysError.CreateWin32(0,
+      'BeginStream: the response body must be empty — stream data is sent via SendChunk');
 
   // No Content-Length + MORE_DATA makes HTTP.sys switch to chunked transfer
   // encoding for HTTP/1.1 clients (SSE needs HTTP/1.1 anyway).
-  BuildHttpResponse(nil, 0, RawResp, Chunk);
+  SendHeaders(HTTP_SEND_RESPONSE_FLAG_MORE_DATA, nil, 0,
+    'HttpSendHttpResponse (BeginStream)');
 
-  BytesSent := 0;
-  Result_ := FApi.SendHttpResponse(
-    FQueueHandle,
-    FRequestId,
-    HTTP_SEND_RESPONSE_FLAG_MORE_DATA,
-    @RawResp,
-    nil,         // pCachePolicy
-    @BytesSent,
-    nil,         // pReserved1
-    0,           // Reserved2
-    nil,         // pOverlapped (synchron)
-    nil);        // pLogData
-
-  TDXHttpSysApi.CheckResult(Result_, 'HttpSendHttpResponse (BeginStream)');
+  // Enter the streaming state only after the headers actually went out: a
+  // failed BeginStream leaves the state NotSent, so the worker's error path
+  // can still send an error response.
+  FState := TDXHttpSysResponseState.Streaming;
 end;
 
 function TDXHttpSysResponse.SendChunk(const AData: TBytes): Boolean;
 var
-  Chunk:    HTTP_DATA_CHUNK;
-  BytesSent: ULONG;
-  Result_:   ULONG;
+  LChunk:  HTTP_DATA_CHUNK;
+  LResult: ULONG;
 begin
-  if not FStreaming then
-    raise EInvalidOperation.Create('SendChunk requires a prior BeginStream.');
-  Result := True;
+  if FState <> TDXHttpSysResponseState.Streaming then
+    raise EDXHttpSysError.CreateWin32(0, 'SendChunk requires a prior BeginStream');
+
+  // Cooperative cancellation: the server is shutting down. Report the stream
+  // as over so the handler unwinds; the worker then completes the stream.
+  if Cancelled then
+    Exit(False);
+
   if Length(AData) = 0 then
-    Exit;
+    Exit(True);
 
-  FillChar(Chunk, SizeOf(Chunk), 0);
-  Chunk.DataChunkType           := HttpDataChunkFromMemory;
-  Chunk.FromMemory.pBuffer      := @AData[0];
-  Chunk.FromMemory.BufferLength := Length(AData);
+  LChunk  := BuildDataChunk(@AData[0], Length(AData));
+  LResult := SendEntityBody(HTTP_SEND_RESPONSE_FLAG_MORE_DATA, 1, @LChunk);
 
-  BytesSent := 0;
-  Result_ := FApi.SendResponseEntityBody(
-    FQueueHandle,
-    FRequestId,
-    HTTP_SEND_RESPONSE_FLAG_MORE_DATA,
-    1,
-    @Chunk,
-    @BytesSent,
-    nil,         // pReserved1
-    0,           // Reserved2
-    nil,         // pOverlapped (synchron)
-    nil);        // pLogData
+  if LResult = ERROR_SUCCESS then
+    Exit(True);
 
-  if Result_ <> ERROR_SUCCESS then
+  if IsStreamOverError(LResult) then
   begin
-    // The client is gone (connection closed/reset) — the stream is over.
-    FStreaming := False;
-    Result := False;
+    // The client is gone (or the queue closed during shutdown) — the normal
+    // end of a long-lived stream, not an error.
+    FState := TDXHttpSysResponseState.Sent;
+    Exit(False);
   end;
+
+  // Anything else is a genuine failure (invalid parameter, resources, ...) and
+  // must surface instead of masquerading as a client disconnect. The state
+  // stays Streaming; the worker completes the stream best-effort.
+  TDXHttpSysApi.CheckResult(LResult, 'HttpSendResponseEntityBody (SendChunk)');
+  Result := False; // not reached — CheckResult raised
 end;
 
 procedure TDXHttpSysResponse.EndStream;
 var
-  BytesSent: ULONG;
-  Result_:   ULONG;
+  LResult: ULONG;
 begin
-  if not FStreaming then
-    Exit;
-  BytesSent := 0;
-  Result_ := FApi.SendResponseEntityBody(
-    FQueueHandle,
-    FRequestId,
-    0,           // no MORE_DATA — this completes the response
-    0,
-    nil,
-    @BytesSent,
-    nil,         // pReserved1
-    0,           // Reserved2
-    nil,         // pOverlapped (synchron)
-    nil);        // pLogData
-  FStreaming := False;
-  TDXHttpSysApi.CheckResult(Result_, 'HttpSendResponseEntityBody (EndStream)');
+  if FState <> TDXHttpSysResponseState.Streaming then
+    Exit; // no-op: never started, or the stream already ended (disconnect)
+
+  LResult := SendEntityBody(0 { no MORE_DATA — completes the response }, 0, nil);
+
+  if (LResult = ERROR_SUCCESS) or IsStreamOverError(LResult) then
+    // The terminating chunk went out, or the client disconnected while we were
+    // sending it — either way the stream is over.
+    FState := TDXHttpSysResponseState.Sent
+  else
+    // Genuine failure: keep the state Streaming so the worker retries the
+    // completion best-effort, and surface the error to the caller.
+    TDXHttpSysApi.CheckResult(LResult, 'HttpSendResponseEntityBody (EndStream)');
 end;
 
 end.

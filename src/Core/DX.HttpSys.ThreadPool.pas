@@ -50,8 +50,13 @@ type
   ///   The request and response are valid only for the duration of the call and
   ///   are not thread-safe. Calling <c>AResponse.Send</c> is optional: if the
   ///   handler returns without having sent, the worker sends the response for it.
-  ///   An unhandled exception is turned into a 500 response and reported via the
-  ///   server's OnError callback; the worker keeps running.
+  ///   Likewise, a streaming response the handler began but did not end is
+  ///   completed by the worker. An unhandled exception is turned into a 500
+  ///   response (or, mid-stream, into stream completion) and reported via the
+  ///   server's OnError callback; the worker keeps running. Long-running
+  ///   handlers should poll <c>AResponse.Cancelled</c> and return promptly when
+  ///   it turns True (server shutdown) — note that each handler occupies one
+  ///   pooled worker thread for its full duration.
   /// </remarks>
   IDXHttpSysRequestHandler = interface
     ['{6FFE159C-82F2-4FF1-8BA6-3F2544EC5C49}']
@@ -87,6 +92,9 @@ type
   TDXHttpSysWorkerThread = class(TThread)
   private
     FPool:    TDXHttpSysWorkerPool;
+    // Injected into each response as OnQueryCancelled so handlers can observe
+    // shutdown (Response.Cancelled) without depending on this unit.
+    function QueryCancelled: Boolean;
   protected
     procedure Execute; override;
   public
@@ -128,6 +136,7 @@ type
     FOnError:         TOnHttpSysError;
     FServerHeader:    string;
     FActive:          Boolean;
+    FShuttingDown:    Boolean;
 
     // Frees any work items still queued (so their buffers don't leak on Stop).
     procedure DrainPendingQueue;
@@ -142,6 +151,15 @@ type
 
     procedure Start;
     procedure Stop;
+
+    // Flags the pool as shutting down WITHOUT waiting for the threads. Streaming
+    // and other long-running handlers observe this via Response.Cancelled and
+    // unwind promptly. Called by TDXHttpSysServer.Stop before the request queue
+    // handle is closed; Stop sets it as well (idempotent).
+    procedure SignalShutdown;
+
+    // True once shutdown has been signalled (see SignalShutdown).
+    property ShuttingDown: Boolean read FShuttingDown;
 
     // Internal access by the threads
     property Api:          TDXHttpSysApi           read FApi;
@@ -328,6 +346,11 @@ begin
   inherited Create(False);
 end;
 
+function TDXHttpSysWorkerThread.QueryCancelled: Boolean;
+begin
+  Result := Terminated or FPool.ShuttingDown;
+end;
+
 procedure TDXHttpSysWorkerThread.Execute;
 var
   WorkItem:  TDXHttpSysWorkItem;
@@ -363,6 +386,9 @@ begin
             WorkItem.QueueHandle,
             WorkItem.RequestId);
 
+          // Wire up cooperative cancellation (Response.Cancelled).
+          Response.OnQueryCancelled := QueryCancelled;
+
           // Apply the configured Server header as a default the handler may override.
           if FPool.ServerHeader <> '' then
             Response.Headers['server'] := FPool.ServerHeader;
@@ -374,14 +400,27 @@ begin
             begin
               FPool.ReportError(E, Format('HandleRequest [%s %s]',
                 [Request.Method, Request.Path]));
-              // Send 500 if not sent yet
-              if not Response.Sent then
-                Response.SendError(500);
+              // Best effort: still answer the request (500) or, if the handler
+              // failed mid-stream, terminate the chunked response so the client
+              // is not left waiting for chunks that will never come. Either may
+              // hit a dead client; that must not mask the original error.
+              try
+                if Response.Streaming then
+                  Response.EndStream
+                else if not Response.Sent then
+                  Response.SendError(500);
+              except
+                on ECleanup: Exception do
+                  FPool.ReportError(ECleanup, 'HandleRequest cleanup');
+              end;
             end;
           end;
 
-          // Ensure a response is always sent
-          if not Response.Sent then
+          // Ensure a response is always sent, and a stream the handler began
+          // but did not end is always completed.
+          if Response.Streaming then
+            Response.EndStream
+          else if not Response.Sent then
             Response.Send;
         finally
           Request.Free;
@@ -443,7 +482,8 @@ begin
   if FActive then
     Exit;
 
-  FActive := True;
+  FActive       := True;
+  FShuttingDown := False;
 
   // Start worker threads
   for I := 1 to FWorkerCount do
@@ -453,12 +493,24 @@ begin
   FReceiverThread := TDXHttpSysReceiverThread.Create(Self);
 end;
 
+procedure TDXHttpSysWorkerPool.SignalShutdown;
+begin
+  // No synchronisation needed: a plain Boolean written once and polled by the
+  // workers (via Response.Cancelled). Stale reads only delay the observation
+  // by one poll interval.
+  FShuttingDown := True;
+end;
+
 procedure TDXHttpSysWorkerPool.Stop;
 var
   Thread: TDXHttpSysWorkerThread;
 begin
   if not FActive then
     Exit;
+
+  // Let long-running handlers (streams) observe the shutdown first, so the
+  // WaitFor below does not have to sit out their full duration.
+  SignalShutdown;
 
   FActive := False;
 

@@ -128,14 +128,29 @@ uses
 AResponse.Headers['content-type']  := 'text/event-stream';
 AResponse.Headers['cache-control'] := 'no-cache';
 AResponse.BeginStream;                       // Header, ohne Content-Length → chunked
-AResponse.SendChunk(TEncoding.UTF8.GetBytes('data: hello'#10#10));  // ein Event
-AResponse.SendChunk(TEncoding.UTF8.GetBytes('data: world'#10#10));
+for var LEvent in ['data: hello'#10#10, 'data: world'#10#10] do
+  if not AResponse.SendChunk(TEncoding.UTF8.GetBytes(LEvent)) then
+    Exit;                                    // Stream ist vorbei — einfach zurückkehren
 AResponse.EndStream;                         // schließt die Antwort ab
 ```
 
-`SendChunk` liefert `False`, wenn der Client die Verbindung getrennt hat — ein langlebiger
-Stream kann damit sauber enden. Siehe [`demo/07.Sse`](demo/07.Sse) für ein vollständiges,
-lauffähiges Beispiel (zehn Events im Sekundentakt — Test: `curl -N http://localhost:8123/sse`).
+`SendChunk` liefert `False`, wenn der Stream vorbei ist — der Client hat die Verbindung
+getrennt oder der Server fährt herunter —, ein langlebiger Stream endet damit sauber; echte
+Sendefehler lösen stattdessen `EDXHttpSysError` aus. `EndStream` ist nach Stream-Ende ein
+sicherer No-op, und einen Stream, den der Handler begonnen, aber nicht beendet hat, schließt
+der Worker ab (auch bei Exceptions).
+
+Zwei Dinge sind bei langlebigen Streams zu beachten:
+
+- **Jeder Stream belegt einen Worker-Thread des Pools** für seine gesamte Dauer. Der Pool
+  ist fix auf `ThreadCount` dimensioniert (Default `CPUCount * 2`) — für viele gleichzeitige
+  Streams entsprechend größer wählen, sonst verhungern gewöhnliche Requests.
+- **`AResponse.Cancelled` zwischen den Events abfragen** (und lange blinde `Sleep`s
+  vermeiden): die Property wird `True`, sobald der Server herunterfährt, damit `Stop` nicht
+  die volle Stream-Dauer abwarten muss.
+
+Siehe [`demo/07.Sse`](demo/07.Sse) für ein vollständiges, lauffähiges Beispiel (zehn Events
+im Sekundentakt — Test: `curl -N http://localhost:80/sse/`).
 
 ### WebBroker — dein WebModule auf HTTP.sys
 
