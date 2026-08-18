@@ -20,6 +20,8 @@ program StandaloneServer;
 
 {$APPTYPE CONSOLE}
 
+{$R *.res}
+
 uses
   System.SysUtils,
   DX.HttpSys.Api.Types in '..\..\src\Core\DX.HttpSys.Api.Types.pas',

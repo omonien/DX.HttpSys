@@ -31,6 +31,14 @@
     <DCC_ExeOutput>..\..\build\$(Platform)\$(Config)</DCC_ExeOutput>
     <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
     <DCC_UnitSearchPath>..\..\src\Core;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+      <VerInfo_AutoIncBuild>false</VerInfo_AutoIncBuild>
+    <VerInfo_Build>0</VerInfo_Build>
+    <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
+    <VerInfo_Keys>FileVersion=1.0.0.0;ProductVersion=1.0.0.0;CompanyName=Olaf Monien;ProductName=DX.HttpSys;FileDescription=DX.HttpSys server-sent events demo;InternalName=SseDemo;LegalCopyright=Copyright © 2026 Olaf Monien (Developer Experts LLC);LegalTrademarks=;OriginalFilename=SseDemo.exe;Comments=MIT License</VerInfo_Keys>
+    <VerInfo_MajorVer>1</VerInfo_MajorVer>
+    <VerInfo_MinorVer>0</VerInfo_MinorVer>
+    <VerInfo_Release>0</VerInfo_Release>
+    <VerInfo_Locale>1031</VerInfo_Locale>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Cfg_1)'!=''">
     <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>

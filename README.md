@@ -128,14 +128,27 @@ uses
 AResponse.Headers['content-type']  := 'text/event-stream';
 AResponse.Headers['cache-control'] := 'no-cache';
 AResponse.BeginStream;                       // headers, no Content-Length → chunked
-AResponse.SendChunk(TEncoding.UTF8.GetBytes('data: hello'#10#10));  // one event
-AResponse.SendChunk(TEncoding.UTF8.GetBytes('data: world'#10#10));
+for var LEvent in ['data: hello'#10#10, 'data: world'#10#10] do
+  if not AResponse.SendChunk(TEncoding.UTF8.GetBytes(LEvent)) then
+    Exit;                                    // stream is over — just return
 AResponse.EndStream;                         // completes the response
 ```
 
-`SendChunk` returns `False` when the client disconnected, so a long-lived stream can stop
-cleanly. See [`demo/07.Sse`](demo/07.Sse) for a complete, runnable example (ten events, one
-per second — try `curl -N http://localhost:8123/sse`).
+`SendChunk` returns `False` when the stream is over — the client disconnected or the server
+is shutting down — so a long-lived stream stops cleanly; genuine send failures raise
+`EDXHttpSysError` instead. `EndStream` is a safe no-op once the stream ended, and a stream
+your handler began but did not end is completed by the worker (including on exceptions).
+
+Two things to keep in mind for long-lived streams:
+
+- **Each stream occupies one pooled worker thread** for its whole duration. The pool is
+  fixed at `ThreadCount` (default `CPUCount * 2`), so size it for the number of concurrent
+  streams you expect — otherwise streams starve ordinary requests.
+- **Poll `AResponse.Cancelled` between events** (and avoid long blind `Sleep`s): it turns
+  `True` when the server is shutting down, so `Stop` does not have to wait out your stream.
+
+See [`demo/07.Sse`](demo/07.Sse) for a complete, runnable example (ten events, one
+per second — try `curl -N http://localhost:80/sse/`).
 
 ### WebBroker — run your WebModule on HTTP.sys
 

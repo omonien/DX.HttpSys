@@ -3,10 +3,19 @@
 /// </summary>
 /// <remarks>
 ///   Demonstrates the streaming API (BeginStream/SendChunk/EndStream): every
-///   GET /sse connection receives ten events, one per second. Test with:
-///     curl -N http://localhost:8123/sse
+///   GET /sse/ connection receives ten events, one per second. Test with:
+///     curl -N http://localhost:80/sse/
 ///   HTTP.sys uses chunked transfer encoding because the response carries no
 ///   Content-Length and is sent with HTTP_SEND_RESPONSE_FLAG_MORE_DATA.
+///
+///   It binds under a distinct path prefix on the shared port 80, so it can run
+///   simultaneously with the Standalone (/standalone), WiRL (/rest), WebBroker
+///   (/webbroker) and Horse (/horse) demos - HTTP.sys routes by longest-prefix
+///   match across processes.
+///
+///   Note that a streaming handler occupies one pooled worker thread for the
+///   whole stream duration; the handler polls AResponse.Cancelled between
+///   events so server shutdown ends the stream promptly.
 /// </remarks>
 /// <author>Olaf Monien</author>
 /// <created>2026-08-18</created>
@@ -14,6 +23,8 @@
 program SseDemo;
 
 {$APPTYPE CONSOLE}
+
+{$R *.res}
 
 uses
   System.SysUtils,
@@ -37,9 +48,9 @@ procedure TSseHandler.HandleRequest(const ARequest: TDXHttpSysRequest;
 var
   LData: TBytes;
 begin
-  if ARequest.Path <> '/sse' then
+  if ARequest.Path <> '/sse/' then
   begin
-    AResponse.SetBody('Try:  curl -N http://localhost:8123/sse');
+    AResponse.SetBody('Try:  curl -N http://localhost:80/sse/');
     AResponse.Send;
     Exit;
   end;
@@ -52,17 +63,25 @@ begin
   begin
     LData := TEncoding.UTF8.GetBytes('data: tick ' + IntToStr(i) + #10#10);
     if not AResponse.SendChunk(LData) then
-      Exit; // client disconnected — the stream is over
-    Sleep(1000);
+      Exit; // client disconnected or server stopping — the stream is over
+
+    // Wait one second between events, but stay responsive to server shutdown:
+    // poll Cancelled instead of a single blind Sleep(1000).
+    for var j := 1 to 10 do
+    begin
+      Sleep(100);
+      if AResponse.Cancelled then
+        Exit; // the worker completes the stream
+    end;
   end;
 
   LData := TEncoding.UTF8.GetBytes('event: done'#10'data: stream finished'#10#10);
-  AResponse.SendChunk(LData);
-  AResponse.EndStream;
+  AResponse.SendChunk(LData); // if this reports the stream as over, ...
+  AResponse.EndStream;        // ... EndStream is a safe no-op
 end;
 
 const
-  cPrefix = 'http://localhost:8123/';
+  cPrefix = 'http://localhost:80/sse/';
 
 var
   LServer: TDXHttpSysServer;
@@ -75,7 +94,7 @@ begin
       LServer.Start;
 
       Writeln('DX.HttpSys SSE demo listening on ' + cPrefix);
-      Writeln('Try:  curl -N ' + cPrefix + 'sse');
+      Writeln('Try:  curl -N ' + cPrefix);
       Writeln('Press <Enter> to stop.');
       Readln;
 
