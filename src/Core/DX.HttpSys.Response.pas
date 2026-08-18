@@ -42,6 +42,7 @@ type
     FHeaders:      TDXHttpHeaders;
     FBody:         TMemoryStream;
     FSent:         Boolean;
+    FStreaming:    Boolean;
 
     // Buffers that must outlive the HttpSendHttpResponse call: the response
     // struct holds raw pointers into these, so they are instance fields kept
@@ -101,6 +102,27 @@ type
 
     // True after a successful Send()
     property Sent: Boolean read FSent;
+
+    // ------------------------------------------------------------------
+    // Streaming (chunked transfer encoding, e.g. Server-Sent Events)
+    // ------------------------------------------------------------------
+
+    // Starts a streaming response: sends the headers without Content-Length so
+    // HTTP.sys uses chunked transfer encoding for HTTP/1.1 clients. Marks the
+    // response as sent, so the worker will not send again. Must NOT have a
+    // Content-Length header set; the caller sets Content-Type etc. via Headers.
+    procedure BeginStream;
+
+    // Sends one chunk of a streaming response. Returns False when the client
+    // disconnected (the stream is then considered ended). Requires BeginStream.
+    function SendChunk(const AData: TBytes): Boolean;
+
+    // Completes a streaming response (no more data follows). Requires
+    // BeginStream; a no-op once the stream already ended (disconnect).
+    procedure EndStream;
+
+    // True while a streaming response is in progress.
+    property Streaming: Boolean read FStreaming;
   end;
 
 implementation
@@ -386,6 +408,105 @@ begin
   if AReason <> '' then
     ReasonPhrase := AReason;
   Send;
+end;
+
+procedure TDXHttpSysResponse.BeginStream;
+var
+  RawResp:   HTTP_RESPONSE;
+  Chunk:     HTTP_DATA_CHUNK;
+  BytesSent: ULONG;
+  Result_:   ULONG;
+begin
+  CheckNotSent;
+  if not Assigned(FApi.SendResponseEntityBody) then
+    raise EOSError.Create(
+      'HttpSendResponseEntityBody is not available (httpapi.dll v2 required).');
+  if FHeaders.HasHeader('content-length') then
+    raise EInvalidOperation.Create(
+      'BeginStream: a streaming response must not carry a Content-Length header.');
+
+  FSent     := True;   // the worker must not auto-send after HandleRequest
+  FStreaming := True;
+
+  // No Content-Length + MORE_DATA makes HTTP.sys switch to chunked transfer
+  // encoding for HTTP/1.1 clients (SSE needs HTTP/1.1 anyway).
+  BuildHttpResponse(nil, 0, RawResp, Chunk);
+
+  BytesSent := 0;
+  Result_ := FApi.SendHttpResponse(
+    FQueueHandle,
+    FRequestId,
+    HTTP_SEND_RESPONSE_FLAG_MORE_DATA,
+    @RawResp,
+    nil,         // pCachePolicy
+    @BytesSent,
+    nil,         // pReserved1
+    0,           // Reserved2
+    nil,         // pOverlapped (synchron)
+    nil);        // pLogData
+
+  TDXHttpSysApi.CheckResult(Result_, 'HttpSendHttpResponse (BeginStream)');
+end;
+
+function TDXHttpSysResponse.SendChunk(const AData: TBytes): Boolean;
+var
+  Chunk:    HTTP_DATA_CHUNK;
+  BytesSent: ULONG;
+  Result_:   ULONG;
+begin
+  if not FStreaming then
+    raise EInvalidOperation.Create('SendChunk requires a prior BeginStream.');
+  Result := True;
+  if Length(AData) = 0 then
+    Exit;
+
+  FillChar(Chunk, SizeOf(Chunk), 0);
+  Chunk.DataChunkType           := HttpDataChunkFromMemory;
+  Chunk.FromMemory.pBuffer      := @AData[0];
+  Chunk.FromMemory.BufferLength := Length(AData);
+
+  BytesSent := 0;
+  Result_ := FApi.SendResponseEntityBody(
+    FQueueHandle,
+    FRequestId,
+    HTTP_SEND_RESPONSE_FLAG_MORE_DATA,
+    1,
+    @Chunk,
+    @BytesSent,
+    nil,         // pReserved1
+    0,           // Reserved2
+    nil,         // pOverlapped (synchron)
+    nil);        // pLogData
+
+  if Result_ <> ERROR_SUCCESS then
+  begin
+    // The client is gone (connection closed/reset) — the stream is over.
+    FStreaming := False;
+    Result := False;
+  end;
+end;
+
+procedure TDXHttpSysResponse.EndStream;
+var
+  BytesSent: ULONG;
+  Result_:   ULONG;
+begin
+  if not FStreaming then
+    Exit;
+  BytesSent := 0;
+  Result_ := FApi.SendResponseEntityBody(
+    FQueueHandle,
+    FRequestId,
+    0,           // no MORE_DATA — this completes the response
+    0,
+    nil,
+    @BytesSent,
+    nil,         // pReserved1
+    0,           // Reserved2
+    nil,         // pOverlapped (synchron)
+    nil);        // pLogData
+  FStreaming := False;
+  TDXHttpSysApi.CheckResult(Result_, 'HttpSendResponseEntityBody (EndStream)');
 end;
 
 end.

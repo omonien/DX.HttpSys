@@ -130,6 +130,18 @@ type
     pOverlapped:    POverlapped;
     pLogData:       Pointer): ULONG; stdcall;
 
+  TFnHttpSendResponseEntityBody = function(
+    ReqQueueHandle:   THandle;
+    RequestId:        HTTP_REQUEST_ID;
+    Flags:            ULONG;
+    EntityChunkCount: USHORT;
+    pEntityChunks:    PHTTP_DATA_CHUNK;
+    pBytesSent:       PULONG;
+    pReserved1:       Pointer;
+    Reserved2:        ULONG;
+    pOverlapped:      POverlapped;
+    pLogData:         Pointer): ULONG; stdcall;
+
   // ---------------------------------------------------------------------------
   // TDXHttpSysApi — runtime function table for httpapi.dll v2.0.
   //
@@ -172,6 +184,7 @@ type
     ReceiveHttpRequest:       TFnHttpReceiveHttpRequest;
     ReceiveRequestEntityBody: TFnHttpReceiveRequestEntityBody;
     SendHttpResponse:         TFnHttpSendHttpResponse;
+    SendResponseEntityBody:   TFnHttpSendResponseEntityBody;
 
     // Unloads the DLL (if still loaded) before the instance is freed.
     destructor Destroy; override;
@@ -273,6 +286,7 @@ begin
   @ReceiveHttpRequest       := GetProc('HttpReceiveHttpRequest');
   @ReceiveRequestEntityBody := GetProc('HttpReceiveRequestEntityBody');
   @SendHttpResponse         := GetProc('HttpSendHttpResponse');
+  @SendResponseEntityBody   := GetProc('HttpSendResponseEntityBody');
 
   // Check critical functions
   if not Assigned(Initialize)
@@ -309,6 +323,7 @@ begin
   @ReceiveHttpRequest       := nil;
   @ReceiveRequestEntityBody := nil;
   @SendHttpResponse         := nil;
+  @SendResponseEntityBody   := nil;
 end;
 
 procedure TDXHttpSysApi.Unload;
