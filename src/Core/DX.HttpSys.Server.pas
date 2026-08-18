@@ -520,6 +520,10 @@ begin
   // CloseHandle on the queue wakes up the blocking call
   if Assigned(FWorkerPool) then
   begin
+    // Signal cooperative cancellation first: long-running handlers observe
+    // Response.Cancelled and unwind before the pool waits for the workers.
+    FWorkerPool.SignalShutdown;
+
     // Closing the queue wakes up the receiver thread
     if FReqQueueHandle <> INVALID_HANDLE_VALUE then
     begin
