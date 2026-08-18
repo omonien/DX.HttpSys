@@ -486,11 +486,14 @@ end;
 class function TDXHttpSysResponse.IsStreamOverError(ACode: ULONG): Boolean;
 begin
   // "The connection/stream is gone" — the client disconnected
-  // (CONNECTION_INVALID / NETNAME_DELETED) or the request queue was closed or
-  // the I/O aborted during server shutdown (INVALID_HANDLE / OPERATION_ABORTED).
+  // (CONNECTION_INVALID / NETNAME_DELETED / CONNECTION_ABORTED /
+  // CONNECTION_RESET) or the request queue was closed or the I/O aborted
+  // during server shutdown (INVALID_HANDLE / OPERATION_ABORTED).
   // Everything else is a genuine failure of the call itself.
   Result := (ACode = ERROR_CONNECTION_INVALID)
     or (ACode = ERROR_NETNAME_DELETED)
+    or (ACode = ERROR_CONNECTION_ABORTED)
+    or (ACode = ERROR_CONNECTION_RESET)
     or (ACode = ERROR_INVALID_HANDLE)
     or (ACode = ERROR_OPERATION_ABORTED);
 end;
@@ -516,10 +519,27 @@ begin
   else
     LBodyData := nil;
 
-  SendHeaders(0, LBodyData, LBodyLength, 'HttpSendHttpResponse');
+  try
+    SendHeaders(0, LBodyData, LBodyLength, 'HttpSendHttpResponse');
+  except
+    on E: EDXHttpSysError do
+    begin
+      // The client hung up while we were answering. Same contract as the
+      // streaming path: a dead client is the normal end, not a server error.
+      // Mark the response as sent so the worker does not attempt a 500 on a
+      // connection that is already gone (which would only produce a second,
+      // misleading error report).
+      if IsStreamOverError(E.ErrorCode) then
+      begin
+        FState := TDXHttpSysResponseState.Sent;
+        Exit;
+      end;
+      raise;
+    end;
+  end;
 
-  // Mark as sent only after the call succeeded: a failed Send leaves the state
-  // NotSent, so the worker's error path can still attempt an error response.
+  // Mark as sent only after the call succeeded: a genuine failed Send leaves
+  // the state NotSent, so the worker's error path can still answer with 500.
   FState := TDXHttpSysResponseState.Sent;
 end;
 
@@ -600,14 +620,15 @@ begin
   if FState <> TDXHttpSysResponseState.Streaming then
     Exit; // no-op: never started, or the stream already ended (disconnect)
 
-  // Whatever the API says below, the stream is over after this call.
-  FState := TDXHttpSysResponseState.Sent;
-
   LResult := SendEntityBody(0 { no MORE_DATA — completes the response }, 0, nil);
 
-  // A disconnect between the last chunk and EndStream is a normal race for
-  // long-lived streams — only genuine failures raise.
-  if (LResult <> ERROR_SUCCESS) and not IsStreamOverError(LResult) then
+  if (LResult = ERROR_SUCCESS) or IsStreamOverError(LResult) then
+    // The terminating chunk went out, or the client disconnected while we were
+    // sending it — either way the stream is over.
+    FState := TDXHttpSysResponseState.Sent
+  else
+    // Genuine failure: keep the state Streaming so the worker retries the
+    // completion best-effort, and surface the error to the caller.
     TDXHttpSysApi.CheckResult(LResult, 'HttpSendResponseEntityBody (EndStream)');
 end;
 
