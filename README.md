@@ -54,7 +54,7 @@ That original library, though, grew under time pressure. It was modelled closely
 - 🛡️ **Stability as a first-class goal** — designed for leak-free, race-free operation under sustained high load, backed by unit, integration, load and soak tests.
 - 🔌 **Drop-in adapters** — switch WiRL from Indy to HTTP.sys by changing a single `uses` line.
 - 🖥️ **UI-neutral** — Console, Windows Service, VCL or FMX. Embed a kernel HTTP server straight into a desktop app if you want.
-- 📡 **Chunked streaming (SSE)** — `BeginStream`/`SendChunk`/`EndStream` push `text/event-stream` responses over HTTP.sys chunked transfer encoding — Server-Sent Events with zero dependencies (see [`demo/07.Sse`](demo/07.Sse)).
+- 📡 **Chunked streaming (SSE)** — `BeginStream`/`SendChunk`/`EndStream` push `text/event-stream` responses with chunked transfer encoding (framed by DX.HttpSys) — Server-Sent Events with zero dependencies (see [`demo/07.Sse`](demo/07.Sse)).
 
 ---
 

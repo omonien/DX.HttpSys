@@ -307,12 +307,12 @@ begin
         'Host: localhost:' + IntToStr(APort) + #13#10 +
         'Connection: keep-alive'#13#10#13#10;
       LBytes := TEncoding.UTF8.GetBytes(LRequest);
-      Assert.IsTrue(send(LSock, PAnsiChar(@LBytes[0]), Length(LBytes), 0) > 0,
+      Assert.IsTrue(send(LSock, LBytes[0], Length(LBytes), 0) > 0,
         'send failed');
 
       // Wait until the stream actually started, then abort with RST so the
       // server observes a hard disconnect (not a graceful close).
-      LLen := recv(LSock, PAnsiChar(@LBuffer[0]), SizeOf(LBuffer), 0);
+      LLen := recv(LSock, LBuffer[0], SizeOf(LBuffer), 0);
       Assert.IsTrue(LLen > 0, 'no data received from the stream');
 
       LLinger.l_onoff  := 1;
@@ -810,9 +810,12 @@ begin
           end;
         end), LErrors.Report);
     try
+      // AbortSseConnection issues the GET that makes the handler run, reads the
+      // start of the stream, then aborts with RST — only after that can the
+      // handler-side events be awaited.
+      AbortSseConnection(LPort);
       Assert.IsTrue(LStarted.WaitFor(cBudgetMs) = TWaitResult.wrSignaled,
         'stream did not start');
-      AbortSseConnection(LPort);
       Assert.IsTrue(LDisconnectSeen.WaitFor(cBudgetMs) = TWaitResult.wrSignaled,
         'handler did not observe the client disconnect');
       Assert.IsTrue(LHandlerDone.WaitFor(cBudgetMs) = TWaitResult.wrSignaled,

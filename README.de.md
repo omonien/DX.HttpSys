@@ -54,7 +54,7 @@ Diese ursprüngliche Bibliothek ist allerdings unter Zeitdruck gewachsen. Sie wa
 - 🛡️ **Stabilität als Primärziel** — ausgelegt auf leak- und race-freien Betrieb unter Dauerhochlast, abgesichert durch Unit-, Integrations-, Last- und Soak-Tests.
 - 🔌 **Drop-in-Adapter** — WiRL von Indy auf HTTP.sys umstellen heißt: eine einzige `uses`-Zeile ändern.
 - 🖥️ **UI-neutral** — Console, Windows-Service, VCL oder FMX. Bei Bedarf einen Kernel-HTTP-Server direkt in eine Desktop-App einbetten.
-- 📡 **Chunked Streaming (SSE)** — `BeginStream`/`SendChunk`/`EndStream` liefern `text/event-stream`-Antworten über die Chunked-Transfer-Encoding von HTTP.sys — Server-Sent Events ohne jede Abhängigkeit (siehe [`demo/07.Sse`](demo/07.Sse)).
+- 📡 **Chunked Streaming (SSE)** — `BeginStream`/`SendChunk`/`EndStream` liefern `text/event-stream`-Antworten mit Chunked-Transfer-Encoding (das Framing übernimmt DX.HttpSys) — Server-Sent Events ohne jede Abhängigkeit (siehe [`demo/07.Sse`](demo/07.Sse)).
 
 ---
 

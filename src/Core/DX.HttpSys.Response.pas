@@ -90,6 +90,10 @@ type
     // Wraps a memory buffer into an HTTP_DATA_CHUNK (the single place that
     // knows the chunk layout — used for the Send body and for SendChunk).
     class function BuildDataChunk(AData: Pointer; ALength: ULONG): HTTP_DATA_CHUNK; static;
+    // Wraps chunk data in chunked-transfer-coding framing (RFC 9112 §7.1):
+    // "<size in hex>" CRLF <data> CRLF, as one contiguous buffer so each chunk
+    // goes out in a single HttpSendResponseEntityBody call.
+    class function FrameChunk(const AData: TBytes): TBytes; static;
     // Shared HttpSendHttpResponse call for Send (AFlags=0, with body) and
     // BeginStream (MORE_DATA, no body). Raises via CheckResult on failure.
     procedure SendHeaders(AFlags: ULONG; ABodyData: Pointer; ABodyLength: ULONG;
@@ -149,8 +153,9 @@ type
     // Streaming (chunked transfer encoding, e.g. Server-Sent Events)
     // ------------------------------------------------------------------
 
-    // Starts a streaming response: sends the headers without Content-Length so
-    // HTTP.sys uses chunked transfer encoding for HTTP/1.1 clients. Requires an
+    // Starts a streaming response: announces "Transfer-Encoding: chunked" and
+    // sends the headers without Content-Length; SendChunk/EndStream emit the
+    // chunk framing themselves (HTTP.sys does not frame on its own). Requires an
     // empty Body and no Content-Length header; the caller sets Content-Type
     // etc. via Headers. On success State becomes Streaming; if the underlying
     // send fails, the state stays NotSent (an error response is still possible).
@@ -436,6 +441,20 @@ begin
   Result.FromMemory.BufferLength := ALength;
 end;
 
+class function TDXHttpSysResponse.FrameChunk(const AData: TBytes): TBytes;
+var
+  LPrefix: TBytes;
+begin
+  // Callers guarantee AData is non-empty (a zero-length frame would terminate
+  // the stream). IntToHex with Digits=1 yields the minimal hex width.
+  LPrefix := TEncoding.ASCII.GetBytes(IntToHex(Length(AData), 1) + #13#10);
+  SetLength(Result, Length(LPrefix) + Length(AData) + 2);
+  Move(LPrefix[0], Result[0], Length(LPrefix));
+  Move(AData[0], Result[Length(LPrefix)], Length(AData));
+  Result[High(Result) - 1] := 13; // CR
+  Result[High(Result)]     := 10; // LF
+end;
+
 procedure TDXHttpSysResponse.SendHeaders(AFlags: ULONG; ABodyData: Pointer;
   ABodyLength: ULONG; const AContext: string);
 var
@@ -486,14 +505,14 @@ end;
 class function TDXHttpSysResponse.IsStreamOverError(ACode: ULONG): Boolean;
 begin
   // "The connection/stream is gone" — the client disconnected
-  // (CONNECTION_INVALID / NETNAME_DELETED / CONNECTION_ABORTED /
-  // CONNECTION_RESET) or the request queue was closed or the I/O aborted
+  // (CONNECTION_INVALID / NETNAME_DELETED / CONNECTION_ABORTED; a client TCP
+  // reset surfaces from kernel I/O as NETNAME_DELETED — winerror.h defines no
+  // ERROR_CONNECTION_RESET) or the request queue was closed or the I/O aborted
   // during server shutdown (INVALID_HANDLE / OPERATION_ABORTED).
   // Everything else is a genuine failure of the call itself.
   Result := (ACode = ERROR_CONNECTION_INVALID)
     or (ACode = ERROR_NETNAME_DELETED)
     or (ACode = ERROR_CONNECTION_ABORTED)
-    or (ACode = ERROR_CONNECTION_RESET)
     or (ACode = ERROR_INVALID_HANDLE)
     or (ACode = ERROR_OPERATION_ABORTED);
 end;
@@ -565,8 +584,14 @@ begin
     raise EDXHttpSysError.CreateWin32(0,
       'BeginStream: the response body must be empty — stream data is sent via SendChunk');
 
-  // No Content-Length + MORE_DATA makes HTTP.sys switch to chunked transfer
-  // encoding for HTTP/1.1 clients (SSE needs HTTP/1.1 anyway).
+  // HTTP.sys does NOT add chunked framing on its own: without Content-Length
+  // and without framing the client can only detect the end of the body by a
+  // connection close, which never comes on a kept-alive connection — every
+  // streaming client would hang until its read timeout (verified on the wire).
+  // So announce chunked transfer coding here and emit the framing in
+  // SendChunk/EndStream — the same user-mode approach .NET's HttpListener
+  // takes. Chunked requires HTTP/1.1 clients (SSE needs HTTP/1.1 anyway).
+  FHeaders['transfer-encoding'] := 'chunked';
   SendHeaders(HTTP_SEND_RESPONSE_FLAG_MORE_DATA, nil, 0,
     'HttpSendHttpResponse (BeginStream)');
 
@@ -578,6 +603,7 @@ end;
 
 function TDXHttpSysResponse.SendChunk(const AData: TBytes): Boolean;
 var
+  LFramed: TBytes;
   LChunk:  HTTP_DATA_CHUNK;
   LResult: ULONG;
 begin
@@ -589,10 +615,13 @@ begin
   if Cancelled then
     Exit(False);
 
+  // An empty chunk cannot travel over chunked transfer coding — a zero-length
+  // frame IS the stream terminator. Accept it as a no-op; the stream stays alive.
   if Length(AData) = 0 then
     Exit(True);
 
-  LChunk  := BuildDataChunk(@AData[0], Length(AData));
+  LFramed := FrameChunk(AData);
+  LChunk  := BuildDataChunk(@LFramed[0], Length(LFramed));
   LResult := SendEntityBody(HTTP_SEND_RESPONSE_FLAG_MORE_DATA, 1, @LChunk);
 
   if LResult = ERROR_SUCCESS then
@@ -615,12 +644,19 @@ end;
 
 procedure TDXHttpSysResponse.EndStream;
 var
-  LResult: ULONG;
+  LTerminator: TBytes;
+  LChunk:      HTTP_DATA_CHUNK;
+  LResult:     ULONG;
 begin
   if FState <> TDXHttpSysResponseState.Streaming then
     Exit; // no-op: never started, or the stream already ended (disconnect)
 
-  LResult := SendEntityBody(0 { no MORE_DATA — completes the response }, 0, nil);
+  // Terminal chunk of the chunked coding ("0" CRLF CRLF) — without it the
+  // client keeps waiting for further chunks until its read timeout. No
+  // MORE_DATA flag: this send completes the response.
+  LTerminator := TEncoding.ASCII.GetBytes('0'#13#10#13#10);
+  LChunk      := BuildDataChunk(@LTerminator[0], Length(LTerminator));
+  LResult     := SendEntityBody(0, 1, @LChunk);
 
   if (LResult = ERROR_SUCCESS) or IsStreamOverError(LResult) then
     // The terminating chunk went out, or the client disconnected while we were

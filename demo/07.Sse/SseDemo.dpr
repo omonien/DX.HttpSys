@@ -5,8 +5,8 @@
 ///   Demonstrates the streaming API (BeginStream/SendChunk/EndStream): every
 ///   GET /sse/ connection receives ten events, one per second. Test with:
 ///     curl -N http://localhost:80/sse/
-///   HTTP.sys uses chunked transfer encoding because the response carries no
-///   Content-Length and is sent with HTTP_SEND_RESPONSE_FLAG_MORE_DATA.
+///   The response uses chunked transfer encoding: DX.HttpSys announces it and
+///   emits the chunk framing itself (HTTP.sys does not frame on its own).
 ///
 ///   It binds under a distinct path prefix on the shared port 80, so it can run
 ///   simultaneously with the Standalone (/standalone), WiRL (/rest), WebBroker
