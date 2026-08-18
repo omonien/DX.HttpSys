@@ -54,6 +54,7 @@ Diese ursprüngliche Bibliothek ist allerdings unter Zeitdruck gewachsen. Sie wa
 - 🛡️ **Stabilität als Primärziel** — ausgelegt auf leak- und race-freien Betrieb unter Dauerhochlast, abgesichert durch Unit-, Integrations-, Last- und Soak-Tests.
 - 🔌 **Drop-in-Adapter** — WiRL von Indy auf HTTP.sys umstellen heißt: eine einzige `uses`-Zeile ändern.
 - 🖥️ **UI-neutral** — Console, Windows-Service, VCL oder FMX. Bei Bedarf einen Kernel-HTTP-Server direkt in eine Desktop-App einbetten.
+- 📡 **Chunked Streaming (SSE)** — `BeginStream`/`SendChunk`/`EndStream` liefern `text/event-stream`-Antworten über die Chunked-Transfer-Encoding von HTTP.sys — Server-Sent Events ohne jede Abhängigkeit (siehe [`demo/07.Sse`](demo/07.Sse)).
 
 ---
 
@@ -116,6 +117,25 @@ begin
   Server.Stop;
 end;
 ```
+
+### Server-Sent Events (Chunked Streaming)
+
+```pascal
+uses
+  DX.HttpSys.Response;
+
+// innerhalb deiner IDXHttpSysRequestHandler.HandleRequest:
+AResponse.Headers['content-type']  := 'text/event-stream';
+AResponse.Headers['cache-control'] := 'no-cache';
+AResponse.BeginStream;                       // Header, ohne Content-Length → chunked
+AResponse.SendChunk(TEncoding.UTF8.GetBytes('data: hello'#10#10));  // ein Event
+AResponse.SendChunk(TEncoding.UTF8.GetBytes('data: world'#10#10));
+AResponse.EndStream;                         // schließt die Antwort ab
+```
+
+`SendChunk` liefert `False`, wenn der Client die Verbindung getrennt hat — ein langlebiger
+Stream kann damit sauber enden. Siehe [`demo/07.Sse`](demo/07.Sse) für ein vollständiges,
+lauffähiges Beispiel (zehn Events im Sekundentakt — Test: `curl -N http://localhost:8123/sse`).
 
 ### WebBroker — dein WebModule auf HTTP.sys
 
