@@ -69,23 +69,40 @@ function Test-Elevated {
         [Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# GET /sse/ with HttpClient, forcing exactly AVersion (no downgrade/upgrade).
-function Invoke-SseGet([version]$AVersion, [string]$AThumbprint) {
-    $handler = [System.Net.Http.SocketsHttpHandler]::new()
-    if ($AThumbprint) {
-        $thumb = $AThumbprint
-        $handler.SslOptions.RemoteCertificateValidationCallback = {
-            param($sender, $cert, $chain, $errors)
-            $cert -and ($cert.GetCertHashString() -eq $thumb)
-        }.GetNewClosure()
+# Certificate check for the temporary certificate, compiled (not a script
+# block): HttpClient's HTTP/2 path runs the TLS handshake on a thread-pool
+# thread, where a PowerShell script block cannot run ("no runspace available").
+if (-not ('DXHttpSysCheckTls' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public static class DXHttpSysCheckTls {
+    public static string Thumbprint;
+    public static bool Validate(object sender, X509Certificate certificate, X509Chain chain,
+        SslPolicyErrors errors) {
+        return certificate != null && !string.IsNullOrEmpty(Thumbprint) &&
+            string.Equals(certificate.GetCertHashString(), Thumbprint, StringComparison.OrdinalIgnoreCase);
     }
+}
+'@
+}
+$certCallback = [System.Delegate]::CreateDelegate(
+    [System.Net.Security.RemoteCertificateValidationCallback],
+    [DXHttpSysCheckTls].GetMethod('Validate'))
+
+# GET AUrl with HttpClient, forcing exactly AVersion (no downgrade/upgrade).
+# Asynchronous send: SocketsHttpHandler has no synchronous HTTP/2 path.
+function Invoke-VersionedGet([string]$AUrl, [version]$AVersion) {
+    $handler = [System.Net.Http.SocketsHttpHandler]::new()
+    $handler.SslOptions.RemoteCertificateValidationCallback = $certCallback
     $client = [System.Net.Http.HttpClient]::new($handler)
     $client.Timeout = [TimeSpan]::FromSeconds(60)
     try {
-        $request = [System.Net.Http.HttpRequestMessage]::new('GET', $prefix)
+        $request = [System.Net.Http.HttpRequestMessage]::new('GET', $AUrl)
         $request.Version       = $AVersion
         $request.VersionPolicy = [System.Net.Http.HttpVersionPolicy]::RequestVersionExact
-        $response = $client.Send($request)
+        $response = $client.SendAsync($request).GetAwaiter().GetResult()
         [pscustomobject]@{
             Status           = [int]$response.StatusCode
             Version          = $response.Version
@@ -101,16 +118,12 @@ function Invoke-SseGet([version]$AVersion, [string]$AThumbprint) {
 
 # GET /sse/ over a raw (TLS) stream with HTTP/1.1, returning the undecoded bytes
 # as text so the chunk framing on the wire can be asserted.
-function Invoke-RawHttp11Get([string]$AThumbprint) {
+function Invoke-RawHttp11Get {
     $tcp = [System.Net.Sockets.TcpClient]::new('127.0.0.1', $Port)
     try {
         $stream = $tcp.GetStream()
         if (-not $NoTls) {
-            $thumb = $AThumbprint
-            $ssl = [System.Net.Security.SslStream]::new($stream, $false, {
-                param($sender, $cert, $chain, $errors)
-                $cert -and ($cert.GetCertHashString() -eq $thumb)
-            }.GetNewClosure())
+            $ssl = [System.Net.Security.SslStream]::new($stream, $false, $certCallback)
             $options = [System.Net.Security.SslClientAuthenticationOptions]::new()
             $options.TargetHost = 'localhost'
             $options.ApplicationProtocols = [System.Collections.Generic.List[System.Net.Security.SslApplicationProtocol]]@(
@@ -163,10 +176,38 @@ if (-not $SkipBuild) {
 $exe = Join-Path $repoRoot "build\$Platform\$Config\SseDemo.exe"
 if (-not (Test-Path $exe)) { Write-Host "Not found: $exe" -ForegroundColor Red; exit 1 }
 
-$cert      = $null
-$bound     = $false
-$demo      = $null
-$thumbprint = $null
+# Removes a certificate created by this script from its store, together with
+# its persisted private key (CNG). Returns $true on success.
+function Remove-TemporaryCertificate([System.Security.Cryptography.X509Certificates.X509Certificate2]$ACert,
+                                     [string]$AStorePath) {
+    $rsa = $null
+    try {
+        $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($ACert)
+        Remove-Item -Path (Join-Path $AStorePath $ACert.Thumbprint) -Force
+        if ($rsa -is [System.Security.Cryptography.RSACng]) { $rsa.Key.Delete() }
+        return $true
+    } catch {
+        Write-Host "Could not remove certificate $($ACert.Thumbprint): $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    } finally {
+        if ($rsa) { $rsa.Dispose() }
+    }
+}
+
+# Runs one group of checks; an exception fails the group but not the others.
+function Invoke-CheckGroup([string]$ATitle, [scriptblock]$AChecks) {
+    Write-Host "${ATitle}:"
+    try {
+        & $AChecks
+    } catch {
+        Write-Check $false "$ATitle failed: $($_.Exception.Message)"
+    }
+}
+
+$certStore  = 'Cert:\LocalMachine\My'
+$cert       = $null
+$bound      = $false
+$demo       = $null
 try {
     # 2. Temporary certificate + sslcert binding (TLS only).
     if (-not $NoTls) {
@@ -174,13 +215,14 @@ try {
         if ($existing -match '(?i)certificate hash|zertifikathash') {
             throw "An sslcert binding for $ipPort already exists - choose another -Port (nothing was changed)."
         }
-        $cert = New-SelfSignedCertificate -DnsName 'localhost' -CertStoreLocation 'Cert:\LocalMachine\My' `
+        $cert = New-SelfSignedCertificate -DnsName 'localhost' -CertStoreLocation $certStore `
             -FriendlyName 'DX.HttpSys Http2StreamingCheck (temporary)' -NotAfter (Get-Date).AddDays(1) `
             -KeyAlgorithm RSA -KeyLength 2048 -KeyExportPolicy NonExportable
-        $thumbprint = $cert.Thumbprint
-        Write-Host "Temporary certificate $thumbprint created in LocalMachine\My"
+        [DXHttpSysCheckTls]::Thumbprint = $cert.Thumbprint
+        Write-Host "Temporary certificate $($cert.Thumbprint) created in $certStore"
         $appId = '{' + [guid]::NewGuid().ToString() + '}'
-        $out = netsh http add sslcert ipport=$ipPort certhash=$thumbprint appid=$appId certstorename=MY 2>&1 | Out-String
+        # "add" fails (error 183) on an existing binding, so it never replaces one.
+        $out = netsh http add sslcert ipport=$ipPort certhash=$($cert.Thumbprint) appid=$appId certstorename=MY 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "netsh http add sslcert failed: $out" }
         $bound = $true
         Write-Host "sslcert binding $ipPort added"
@@ -202,34 +244,38 @@ try {
 
     # 4a. HTTP/2 (TLS only).
     if (-not $NoTls) {
-        Write-Host 'HTTP/2:'
-        $r2 = Invoke-SseGet ([version]'2.0') $thumbprint
-        Write-Check ($r2.Status -eq 200) "status 200 (got $($r2.Status))"
-        Write-Check ($r2.Version -eq [version]'2.0') `
-            "negotiated HTTP/2 (got HTTP/$($r2.Version); HTTP/2 disabled via EnableHttp2Tls=0 or disablehttp2?)"
-        Write-Check (-not $r2.ChunkedHeader -and -not $r2.TransferEncoding) `
-            "no Transfer-Encoding header (got '$($r2.TransferEncoding)')"
-        Write-Check ($r2.ContentType -like 'text/event-stream*') "content-type text/event-stream (got '$($r2.ContentType)')"
-        Write-Check ($r2.Body -ceq $expectedBody) 'body is exactly the SSE events (no chunk framing bytes)'
-        if ($r2.Body -cne $expectedBody) {
-            Write-Host '    received body (escaped):'
-            Write-Host ('    ' + ($r2.Body -replace "`r", '\r' -replace "`n", '\n'))
+        Invoke-CheckGroup 'HTTP/2' {
+            $r2 = Invoke-VersionedGet $prefix ([version]'2.0')
+            Write-Check ($r2.Status -eq 200) "status 200 (got $($r2.Status))"
+            Write-Check ($r2.Version -eq [version]'2.0') `
+                "negotiated HTTP/2 (got HTTP/$($r2.Version); HTTP/2 disabled via EnableHttp2Tls=0 or disablehttp2?)"
+            Write-Check (-not $r2.ChunkedHeader -and -not $r2.TransferEncoding) `
+                "no Transfer-Encoding header (got '$($r2.TransferEncoding)')"
+            Write-Check ($r2.ContentType -like 'text/event-stream*') "content-type text/event-stream (got '$($r2.ContentType)')"
+            Write-Check ($r2.Body -ceq $expectedBody) 'body is exactly the SSE events (no chunk framing bytes)'
+            if ($r2.Body -cne $expectedBody) {
+                Write-Host '    received body (escaped):'
+                Write-Host ('    ' + ($r2.Body -replace "`r", '\r' -replace "`n", '\n'))
+            }
         }
     }
 
     # 4b. HTTP/1.1 (decoded by HttpClient).
-    Write-Host 'HTTP/1.1:'
-    $r1 = Invoke-SseGet ([version]'1.1') $thumbprint
-    Write-Check ($r1.Status -eq 200) "status 200 (got $($r1.Status))"
-    Write-Check ($r1.Version -eq [version]'1.1') "HTTP/1.1 (got HTTP/$($r1.Version))"
-    Write-Check ($r1.ChunkedHeader -eq $true) 'Transfer-Encoding: chunked'
-    Write-Check ($r1.Body -ceq $expectedBody) 'decoded body is exactly the SSE events'
+    Invoke-CheckGroup 'HTTP/1.1' {
+        $r1 = Invoke-VersionedGet $prefix ([version]'1.1')
+        Write-Check ($r1.Status -eq 200) "status 200 (got $($r1.Status))"
+        Write-Check ($r1.Version -eq [version]'1.1') "HTTP/1.1 (got HTTP/$($r1.Version))"
+        Write-Check ($r1.ChunkedHeader -eq $true) 'Transfer-Encoding: chunked'
+        Write-Check ($r1.Body -ceq $expectedBody) 'decoded body is exactly the SSE events'
+    }
 
     # 4c. HTTP/1.1 raw wire: the exact chunk framing.
-    $raw = Invoke-RawHttp11Get $thumbprint
-    $split = $raw.IndexOf("`r`n`r`n")
-    $rawBody = if ($split -ge 0) { $raw.Substring($split + 4) } else { '' }
-    Write-Check ($rawBody -ceq (Get-ExpectedChunkedBody)) 'raw HTTP/1.1 body carries the exact chunk framing'
+    Invoke-CheckGroup 'HTTP/1.1 raw wire' {
+        $raw = Invoke-RawHttp11Get
+        $split = $raw.IndexOf("`r`n`r`n")
+        $rawBody = if ($split -ge 0) { $raw.Substring($split + 4) } else { '' }
+        Write-Check ($rawBody -ceq (Get-ExpectedChunkedBody)) 'raw HTTP/1.1 body carries the exact chunk framing'
+    }
 } catch {
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
     $script:failures++
@@ -247,19 +293,18 @@ try {
         $demo.Dispose()
     }
     if ($bound) {
-        netsh http delete sslcert ipport=$ipPort | Out-Null
-        Write-Host "sslcert binding $ipPort removed"
+        $out = netsh http delete sslcert ipport=$ipPort 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "sslcert binding $ipPort removed"
+        } else {
+            Write-Host "Could not remove the sslcert binding ${ipPort}: $out" -ForegroundColor Yellow
+            $script:failures++
+        }
     }
     if ($cert) {
-        $path = "Cert:\LocalMachine\My\$thumbprint"
-        try {
-            # Remove the certificate and its persisted private key.
-            $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
-            Remove-Item -Path $path -Force
-            if ($rsa -is [System.Security.Cryptography.RSACng]) { $rsa.Key.Delete() }
-            Write-Host "Temporary certificate $thumbprint removed (incl. private key)"
-        } catch {
-            Write-Host "Could not remove certificate ${thumbprint}: $($_.Exception.Message)" -ForegroundColor Yellow
+        if (Remove-TemporaryCertificate $cert $certStore) {
+            Write-Host "Temporary certificate $($cert.Thumbprint) removed (incl. private key)"
+        } else {
             $script:failures++
         }
     }

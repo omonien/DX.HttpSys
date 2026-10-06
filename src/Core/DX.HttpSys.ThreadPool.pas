@@ -381,17 +381,16 @@ begin
             WorkItem.QueueHandle,
             PHTTP_REQUEST(@WorkItem.RequestBuffer[0]));
 
+          // The response's framing and allowed headers follow the protocol the
+          // client spoke (HTTP/1.0, 1.1, 2 or 3).
           Response := TDXHttpSysResponse.Create(
             FPool.Api,
             WorkItem.QueueHandle,
-            WorkItem.RequestId);
+            WorkItem.RequestId,
+            Request.ProtocolVersion);
 
           // Wire up cooperative cancellation (Response.Cancelled).
           Response.OnQueryCancelled := QueryCancelled;
-
-          // The response's framing and allowed headers follow the protocol the
-          // client spoke (HTTP/1.0, 1.1, 2 or 3).
-          Response.ProtocolVersion := Request.ProtocolVersion;
 
           // Apply the configured Server header as a default the handler may override.
           if FPool.ServerHeader <> '' then

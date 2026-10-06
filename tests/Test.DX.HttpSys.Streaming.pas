@@ -145,6 +145,48 @@ type
       AExpected: Boolean);
   end;
 
+  // The send sequence a response hands to HTTP.sys per protocol version, with
+  // the two send functions of TDXHttpSysApi replaced by recording fakes. This
+  // runs the HTTP/2 paths (which need an elevated TLS binding on the wire)
+  // without elevation.
+  [TestFixture]
+  TStreamSendSequenceTests = class
+  private
+    FApi: TObject; // TDXHttpSysApi with fake send functions
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+
+    // HTTP/2: no Transfer-Encoding, no connection-specific headers, unframed
+    // DATA, an empty final send without MORE_DATA.
+    [Test]
+    procedure Http2_Stream_UnframedDataAndEmptyFinalSend;
+
+    // HTTP/3 takes the same path as HTTP/2.
+    [Test]
+    procedure Http3_Stream_UnframedDataAndEmptyFinalSend;
+
+    // HTTP/1.1: exactly the sequence before the protocol-dependent framing.
+    [Test]
+    procedure Http11_Stream_ChunkFramingUnchanged;
+
+    // HTTP/1.0: no Transfer-Encoding, DISCONNECT on the header send and on the
+    // final send, unframed data.
+    [Test]
+    procedure Http10_Stream_CloseDelimited;
+
+    // HTTP/2 single-shot Send: connection-specific headers are dropped too.
+    [Test]
+    procedure Http2_Send_DropsConnectionSpecificHeaders;
+
+    // A failed BeginStream leaves no "Transfer-Encoding: chunked" behind for the
+    // error response the worker sends next (it has a Content-Length body).
+    [Test]
+    procedure FailedBeginStream_ErrorResponseHasNoTransferEncoding;
+  end;
+
 implementation
 
 uses
@@ -392,7 +434,7 @@ end;
 // Sends a raw request over a fresh socket and reads the whole reply until the
 // server closes the connection. AClosedByServer is False when the read ended
 // by the receive timeout (or an error) instead — the server never closed it.
-// The bytes are returned one-to-one as chars (ANSI), so framing is visible.
+// Every byte becomes one Char of the same ordinal, so framing is visible.
 function RawExchange(APort: Word; const ARequest: string;
   out AClosedByServer: Boolean): string;
 var
@@ -404,6 +446,7 @@ var
   LBuffer:  array[0..4095] of Byte;
   LLen:     Integer;
   LReply:   TBytesStream;
+  I:        Integer;
 begin
   AClosedByServer := False;
   Result := '';
@@ -433,7 +476,9 @@ begin
           LReply.WriteBuffer(LBuffer[0], LLen);
       until LLen <= 0;
       AClosedByServer := LLen = 0; // 0 = orderly close; SOCKET_ERROR = timeout
-      Result := TEncoding.ANSI.GetString(LReply.Bytes, 0, LReply.Size);
+      SetLength(Result, LReply.Size);
+      for I := 0 to LReply.Size - 1 do
+        Result[I + 1] := Char(LReply.Bytes[I]);
     finally
       LReply.Free;
       closesocket(LSock);
@@ -1042,6 +1087,8 @@ begin
     Assert.Contains(LHead, ' 200 ', 'status line');
     Assert.DoesNotContain(LHead, 'Transfer-Encoding', True,
       'no chunked coding for an HTTP/1.0 client');
+    Assert.DoesNotContain(LHead, 'keep-alive', True,
+      'a close-delimited body must not announce keep-alive: ' + LHead);
     Assert.AreEqual('1.0|tail', LBody, 'unframed body');
     Assert.AreEqual('', LErrors.Text, 'no worker-side errors');
   finally
@@ -1087,8 +1134,229 @@ begin
     TDXHttpSysResponse.IsHeaderAllowed(AName, MakeVersion(AMajor, AMinor)));
 end;
 
+// -----------------------------------------------------------------------------
+// TStreamSendSequenceTests — recording fakes for the two HTTP.sys send calls
+// -----------------------------------------------------------------------------
+
+var
+  // One line per send call (tests run sequentially, on the test thread).
+  GSendLog: TStringList;
+  // Result code of the next HttpSendHttpResponse call (then reset to success).
+  GNextHeaderResult: ULONG;
+
+// Renders a byte buffer with CR/LF made visible, so the framing reads in a log.
+function VisibleBytes(AData: PByte; ALength: ULONG): string;
+var
+  I: ULONG;
+begin
+  Result := '';
+  if ALength = 0 then
+    Exit;
+  for I := 0 to ALength - 1 do
+    case AData[I] of
+      13: Result := Result + '\r';
+      10: Result := Result + '\n';
+    else
+      Result := Result + Char(AData[I]);
+    end;
+end;
+
+function ChunksText(ACount: USHORT; AChunks: PHTTP_DATA_CHUNK): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to Integer(ACount) - 1 do
+  begin
+    Result := Result + VisibleBytes(AChunks^.FromMemory.pBuffer,
+      AChunks^.FromMemory.BufferLength);
+    Inc(AChunks);
+  end;
+end;
+
+function BufferText(ABuffer: PAnsiChar; ALength: USHORT): string;
+var
+  LText: AnsiString;
+begin
+  Result := '';
+  if (ABuffer = nil) or (ALength = 0) then
+    Exit;
+  SetString(LText, ABuffer, ALength);
+  Result := string(LText);
+end;
+
+function KnownHeaderText(const AResponse: HTTP_RESPONSE; AId: HTTP_HEADER_ID): string;
+begin
+  Result := BufferText(AResponse.Headers.KnownHeaders[Ord(AId)].pRawValue,
+    AResponse.Headers.KnownHeaders[Ord(AId)].RawValueLength);
+end;
+
+function FakeSendHttpResponse(ReqQueueHandle: THandle; RequestId: HTTP_REQUEST_ID;
+  Flags: ULONG; pResponse: PHTTP_RESPONSE; pCachePolicy: Pointer;
+  pBytesSent: PULONG; pReserved1: Pointer; Reserved2: ULONG;
+  pOverlapped: POverlapped; pLogData: Pointer): ULONG; stdcall;
+var
+  LUnknown: string;
+  LHeader:  PHTTP_UNKNOWN_HEADER;
+  I:        Integer;
+begin
+  LUnknown := '';
+  LHeader  := pResponse^.Headers.pUnknownHeaders;
+  for I := 0 to Integer(pResponse^.Headers.UnknownHeaderCount) - 1 do
+  begin
+    LUnknown := LUnknown + BufferText(LHeader^.pName, LHeader^.NameLength) + ';';
+    Inc(LHeader);
+  end;
+  GSendLog.Add(Format('H flags=%d te=%s connection=%s keep-alive=%s upgrade=%s ' +
+    'content-length=%s unknown=%s body=%s', [Flags,
+    KnownHeaderText(pResponse^, HttpHeaderTransferEncoding),
+    KnownHeaderText(pResponse^, HttpHeaderConnection),
+    KnownHeaderText(pResponse^, HttpHeaderKeepAlive),
+    KnownHeaderText(pResponse^, HttpHeaderUpgrade),
+    KnownHeaderText(pResponse^, HttpHeaderContentLength),
+    LUnknown,
+    ChunksText(pResponse^.EntityChunkCount, pResponse^.pEntityChunks)]));
+  Result := GNextHeaderResult;
+  GNextHeaderResult := ERROR_SUCCESS;
+end;
+
+function FakeSendResponseEntityBody(ReqQueueHandle: THandle;
+  RequestId: HTTP_REQUEST_ID; Flags: ULONG; EntityChunkCount: USHORT;
+  pEntityChunks: PHTTP_DATA_CHUNK; pBytesSent: PULONG; pReserved1: Pointer;
+  Reserved2: ULONG; pOverlapped: POverlapped; pLogData: Pointer): ULONG; stdcall;
+begin
+  GSendLog.Add(Format('B flags=%d chunks=%d data=%s',
+    [Flags, EntityChunkCount, ChunksText(EntityChunkCount, pEntityChunks)]));
+  Result := ERROR_SUCCESS;
+end;
+
+// Runs a typical SSE stream (two events) on a response of the given version and
+// returns the recorded send log.
+function RecordStream(AApi: TDXHttpSysApi; AMajor, AMinor: Integer): string;
+var
+  LResponse: TDXHttpSysResponse;
+begin
+  GSendLog.Clear;
+  LResponse := TDXHttpSysResponse.Create(AApi, 1, 1, MakeVersion(AMajor, AMinor));
+  try
+    LResponse.Headers['content-type']  := 'text/event-stream';
+    LResponse.Headers['connection']    := 'keep-alive'; // a typical SSE handler habit
+    LResponse.Headers['x-accel-buffering'] := 'no';
+    LResponse.BeginStream;
+    LResponse.SendChunk(Utf8Chunk('data: a'#10#10));
+    LResponse.SendChunk(Utf8Chunk('data: bc'#10#10));
+    LResponse.EndStream;
+    Assert.IsTrue(LResponse.Sent, 'response complete after EndStream');
+  finally
+    LResponse.Free;
+  end;
+  Result := GSendLog.Text.Trim;
+end;
+
+procedure TStreamSendSequenceTests.Setup;
+var
+  LApi: TDXHttpSysApi;
+begin
+  GSendLog := TStringList.Create;
+  GNextHeaderResult := ERROR_SUCCESS;
+  LApi := TDXHttpSysApi.Create; // never loaded: only the two fakes are wired
+  LApi.SendHttpResponse       := FakeSendHttpResponse;
+  LApi.SendResponseEntityBody := FakeSendResponseEntityBody;
+  FApi := LApi;
+end;
+
+procedure TStreamSendSequenceTests.TearDown;
+begin
+  FreeAndNil(FApi);
+  FreeAndNil(GSendLog);
+end;
+
+procedure TStreamSendSequenceTests.Http2_Stream_UnframedDataAndEmptyFinalSend;
+begin
+  Assert.AreEqual(
+    'H flags=2 te= connection= keep-alive= upgrade= content-length= unknown=x-accel-buffering; body='#13#10 +
+    'B flags=2 chunks=1 data=data: a\n\n'#13#10 +
+    'B flags=2 chunks=1 data=data: bc\n\n'#13#10 +
+    'B flags=0 chunks=0 data=',
+    RecordStream(TDXHttpSysApi(FApi), 2, 0));
+end;
+
+procedure TStreamSendSequenceTests.Http3_Stream_UnframedDataAndEmptyFinalSend;
+begin
+  Assert.AreEqual(RecordStream(TDXHttpSysApi(FApi), 2, 0),
+    RecordStream(TDXHttpSysApi(FApi), 3, 0));
+end;
+
+procedure TStreamSendSequenceTests.Http11_Stream_ChunkFramingUnchanged;
+begin
+  Assert.AreEqual(
+    'H flags=2 te=chunked connection=keep-alive keep-alive= upgrade= content-length= unknown=x-accel-buffering; body='#13#10 +
+    'B flags=2 chunks=1 data=9\r\ndata: a\n\n\r\n'#13#10 +
+    'B flags=2 chunks=1 data=A\r\ndata: bc\n\n\r\n'#13#10 +
+    'B flags=0 chunks=1 data=0\r\n\r\n',
+    RecordStream(TDXHttpSysApi(FApi), 1, 1));
+end;
+
+procedure TStreamSendSequenceTests.Http10_Stream_CloseDelimited;
+begin
+  Assert.AreEqual(
+    'H flags=3 te= connection=keep-alive keep-alive= upgrade= content-length= unknown=x-accel-buffering; body='#13#10 +
+    'B flags=2 chunks=1 data=data: a\n\n'#13#10 +
+    'B flags=2 chunks=1 data=data: bc\n\n'#13#10 +
+    'B flags=1 chunks=0 data=',
+    RecordStream(TDXHttpSysApi(FApi), 1, 0));
+end;
+
+procedure TStreamSendSequenceTests.Http2_Send_DropsConnectionSpecificHeaders;
+var
+  LResponse: TDXHttpSysResponse;
+begin
+  GSendLog.Clear;
+  LResponse := TDXHttpSysResponse.Create(TDXHttpSysApi(FApi), 1, 1, MakeVersion(2, 0));
+  try
+    LResponse.Headers['connection']        := 'close';
+    LResponse.Headers['keep-alive']        := 'timeout=5';
+    LResponse.Headers['upgrade']           := 'websocket';
+    LResponse.Headers['proxy-connection']  := 'keep-alive';
+    LResponse.Headers['transfer-encoding'] := 'chunked';
+    LResponse.SetBody('ok');
+    LResponse.Send;
+  finally
+    LResponse.Free;
+  end;
+  Assert.AreEqual(
+    'H flags=0 te= connection= keep-alive= upgrade= content-length=2 unknown= body=ok',
+    GSendLog.Text.Trim);
+end;
+
+procedure TStreamSendSequenceTests.FailedBeginStream_ErrorResponseHasNoTransferEncoding;
+var
+  LResponse: TDXHttpSysResponse;
+begin
+  GSendLog.Clear;
+  GNextHeaderResult := ERROR_INVALID_PARAMETER; // the BeginStream header send fails
+  LResponse := TDXHttpSysResponse.Create(TDXHttpSysApi(FApi), 1, 1, MakeVersion(1, 1));
+  try
+    Assert.WillRaise(
+      procedure
+      begin
+        LResponse.BeginStream;
+      end, EDXHttpSysError);
+    Assert.IsFalse(LResponse.Streaming, 'failed BeginStream stays NotSent');
+    LResponse.SendError(500); // what the worker does next
+    Assert.IsTrue(LResponse.Sent);
+  finally
+    LResponse.Free;
+  end;
+  Assert.AreEqual(2, GSendLog.Count, GSendLog.Text);
+  Assert.StartsWith('H flags=2 te=chunked ', GSendLog[0], 'the failed stream header send');
+  Assert.StartsWith('H flags=0 te= ', GSendLog[1],
+    'the 500 must not announce chunked coding: ' + GSendLog[1]);
+end;
+
 initialization
   TDUnitX.RegisterTestFixture(TStreamingIntegrationTests);
   TDUnitX.RegisterTestFixture(TStreamFramingTests);
+  TDUnitX.RegisterTestFixture(TStreamSendSequenceTests);
 
 end.

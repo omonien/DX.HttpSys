@@ -387,18 +387,22 @@ a shared formatter removes the magic while keeping the host/scheme logic in one 
 ### A-21 — Stream framing follows the request's protocol version (HTTP/2 fix)
 **Decision:** `TDXHttpSysRequest.ProtocolVersion` exposes the protocol the client spoke —
 `HTTP_REQUEST_FLAG_HTTP3` / `HTTP_REQUEST_FLAG_HTTP2` win, else the request-line `Version`
-(`ResolveProtocolVersion`). The worker hands it to `TDXHttpSysResponse.ProtocolVersion`, and
-`BeginStream` picks the body framing once (`GetStreamFraming`):
+(`ResolveProtocolVersion`). The worker passes it to the new `TDXHttpSysResponse` constructor
+overload (read-only `ProtocolVersion`; the old constructor means HTTP/1.1), which picks the body
+framing once (`GetStreamFraming`):
 - **HTTP/1.1** — `Transfer-Encoding: chunked` + chunk framing written by the library (unchanged,
   byte-identical; HTTP.sys does not frame, see the streaming fix 6590758).
 - **HTTP/2, HTTP/3** — no `Transfer-Encoding`, no framing: the data goes to HTTP.sys as is (DATA
   frames); `EndStream` is an empty send without `MORE_DATA` (END_STREAM).
-- **HTTP/1.0** — no `Transfer-Encoding` (RFC 9112 §6.1); `EndStream` sends with
-  `HTTP_SEND_RESPONSE_FLAG_DISCONNECT`, the connection close ends the body.
+- **HTTP/1.0** — no `Transfer-Encoding` (RFC 9112 §6.1); the header send already carries
+  `HTTP_SEND_RESPONSE_FLAG_DISCONNECT` (with `MORE_DATA`, as ASP.NET Core does, so HTTP.sys does
+  not announce keep-alive) and `EndStream` sends with it, the connection close ends the body.
 
 `BuildHeaders` drops headers the client's protocol forbids (`IsHeaderAllowed`): connection-specific
 fields (`Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding`, `Upgrade`) on HTTP/2+,
-`Transfer-Encoding` on HTTP/1.0. HTTP/1.1 responses go out exactly as before.
+`Transfer-Encoding` on HTTP/1.0. HTTP/1.1 responses go out exactly as before. The chunked stream's
+own `Transfer-Encoding` is added by `BuildHeaders` during the `BeginStream` header send only (not
+stored in `Headers`), so a failed `BeginStream` no longer leaves it behind for the worker's 500.
 
 **Why:** HTTP.sys negotiates HTTP/2 via ALPN on every TLS listener by default (Windows 10 / Server
 2016+, unless disabled with `disablehttp2` on the sslcert binding / `EnableHttp2Tls = 0`). There the
@@ -411,9 +415,14 @@ version from the HTTP2/HTTP3 flags first (`NativeRequestContext.GetVersion`).
 HTTP/1.1 itself, but it is too new for the supported Windows versions.
 
 **How to apply:** Never set framing headers by hand in handlers; let `BeginStream` choose. Guarded by
-`TStreamFramingTests` (pure decisions), `Http11RawWire_ChunkFramingUnchanged` and
+`TStreamFramingTests` (pure decisions), `TStreamSendSequenceTests` (the exact HTTP.sys send calls per
+protocol, through recording fakes for `SendHttpResponse`/`SendResponseEntityBody` — runs the HTTP/2
+path without elevation), `Http11RawWire_ChunkFramingUnchanged` and
 `Http10RawWire_NoChunkedCoding_ClosesConnection` (wire level over plain http). The HTTP/2 wire check
-needs a TLS binding, i.e. elevation: `tests-integration/Http2StreamingCheck.ps1`.
+needs a TLS binding, i.e. elevation: `tests-integration/Http2StreamingCheck.ps1`. Open: whether
+HTTP.sys reports an HTTP/2 client reset (RST_STREAM) on the final send with a code outside
+`IsStreamOverError` (ASP.NET Core also tolerates `ERROR_INVALID_PARAMETER` there) — to be observed in
+an elevated run; HEAD requests still get stream bytes (pre-existing).
 
 <!-- New architecture decisions are appended below. -->
 

@@ -84,6 +84,11 @@ type
     FOnQueryCancelled: TDXHttpSysQueryCancelled;
     FProtocolVersion: THTTP_VERSION;
     FStreamFraming:   TDXHttpSysStreamFraming;
+    // True only while BeginStream sends the headers of a chunked stream:
+    // BuildHeaders then adds "Transfer-Encoding: chunked". Kept out of FHeaders
+    // so a failed BeginStream leaves no stale header behind for the error
+    // response the worker sends next.
+    FAnnounceChunked: Boolean;
 
     // Buffers that must outlive the HttpSendHttpResponse call: the response
     // struct holds raw pointers into these, so they are instance fields kept
@@ -99,7 +104,6 @@ type
     function  GetStreaming: Boolean;
     function  GetCancelled: Boolean;
     procedure CheckNotSent;
-    procedure SetProtocolVersion(const AValue: THTTP_VERSION);
     // Maps a header name to its known HTTP.sys response header index, or -1 if
     // the header is not a known response header and must travel as "unknown".
     class function KnownResponseHeaderIndex(const AName: string): Integer; static;
@@ -129,10 +133,18 @@ type
     // failure of the call itself.
     class function IsStreamOverError(ACode: ULONG): Boolean; static;
   public
+    // A response for an HTTP/1.1 request.
     constructor Create(
       const AApi:        TDXHttpSysApi;
       AQueueHandle:      THandle;
-      ARequestId:        HTTP_REQUEST_ID);
+      ARequestId:        HTTP_REQUEST_ID); overload;
+    // A response for a request of protocol version AProtocolVersion (the
+    // worker passes TDXHttpSysRequest.ProtocolVersion).
+    constructor Create(
+      const AApi:        TDXHttpSysApi;
+      AQueueHandle:      THandle;
+      ARequestId:        HTTP_REQUEST_ID;
+      const AProtocolVersion: THTTP_VERSION); overload;
     destructor  Destroy; override;
 
     // HTTP status code (default: 200)
@@ -213,12 +225,9 @@ type
     property OnQueryCancelled: TDXHttpSysQueryCancelled
       read FOnQueryCancelled write FOnQueryCancelled;
 
-    // Protocol version of the request this response answers (default 1.1).
-    // Injected by the worker thread from TDXHttpSysRequest.ProtocolVersion; it
-    // decides the stream framing and which headers may be sent. Can only be
-    // changed before the response went out.
-    property ProtocolVersion: THTTP_VERSION
-      read FProtocolVersion write SetProtocolVersion;
+    // Protocol version of the request this response answers (set at creation,
+    // default 1.1). It decides the stream framing and which headers may be sent.
+    property ProtocolVersion: THTTP_VERSION read FProtocolVersion;
 
     /// <summary>
     ///   The body framing a streaming response uses for a request of protocol
@@ -296,6 +305,19 @@ constructor TDXHttpSysResponse.Create(
   const AApi:     TDXHttpSysApi;
   AQueueHandle:   THandle;
   ARequestId:     HTTP_REQUEST_ID);
+var
+  LHttp11: THTTP_VERSION;
+begin
+  LHttp11.MajorVersion := 1;
+  LHttp11.MinorVersion := 1;
+  Create(AApi, AQueueHandle, ARequestId, LHttp11);
+end;
+
+constructor TDXHttpSysResponse.Create(
+  const AApi:     TDXHttpSysApi;
+  AQueueHandle:   THandle;
+  ARequestId:     HTTP_REQUEST_ID;
+  const AProtocolVersion: THTTP_VERSION);
 begin
   inherited Create;
   FApi          := AApi;
@@ -306,11 +328,8 @@ begin
   FHeaders      := TDXHttpHeaders.Create;
   FBody         := TMemoryStream.Create;
   FState        := TDXHttpSysResponseState.NotSent;
-  // Default HTTP/1.1: the behaviour of a response created without a request
-  // protocol (the worker injects the real one).
-  FProtocolVersion.MajorVersion := 1;
-  FProtocolVersion.MinorVersion := 1;
-  FStreamFraming := TDXHttpSysStreamFraming.Chunked;
+  FProtocolVersion := AProtocolVersion;
+  FStreamFraming   := GetStreamFraming(AProtocolVersion);
 end;
 
 destructor TDXHttpSysResponse.Destroy;
@@ -336,12 +355,6 @@ procedure TDXHttpSysResponse.SetReasonPhrase(const AValue: string);
 begin
   CheckNotSent;
   FReasonPhrase := AnsiString(AValue);
-end;
-
-procedure TDXHttpSysResponse.SetProtocolVersion(const AValue: THTTP_VERSION);
-begin
-  CheckNotSent;
-  FProtocolVersion := AValue;
 end;
 
 class function TDXHttpSysResponse.GetStreamFraming(
@@ -468,6 +481,7 @@ var
   LIndex:   Integer;
   LUnknown: Integer;
   LVersion: THTTP_VERSION;
+  LChunked: Boolean;
 begin
   // Collect the headers first (a closure cannot capture the `out` ARawResp),
   // then write them into ARawResp and the backing buffers in a plain loop. The
@@ -476,19 +490,29 @@ begin
   SetLength(LNames, 0);
   SetLength(LValues, 0);
   LVersion := FProtocolVersion;
+  LChunked := FAnnounceChunked;
   FHeaders.EnumHeaders(
     procedure(AName, AValue: string)
     begin
       // Headers the client's protocol forbids (connection-specific fields on
       // HTTP/2+, Transfer-Encoding on HTTP/1.0) are dropped here, so neither the
-      // library nor a handler can produce a malformed response.
-      if not IsHeaderAllowed(AName, LVersion) then
+      // library nor a handler can produce a malformed response. A chunked
+      // stream's own Transfer-Encoding replaces any the handler set.
+      if not IsHeaderAllowed(AName, LVersion)
+        or (LChunked and SameText(AName, 'transfer-encoding')) then
         Exit;
       SetLength(LNames, Length(LNames) + 1);
       SetLength(LValues, Length(LValues) + 1);
       LNames[High(LNames)]   := AName;
       LValues[High(LValues)] := AValue;
     end);
+  if LChunked then
+  begin
+    SetLength(LNames, Length(LNames) + 1);
+    SetLength(LValues, Length(LValues) + 1);
+    LNames[High(LNames)]   := 'transfer-encoding';
+    LValues[High(LValues)] := 'chunked';
+  end;
 
   SetLength(FHeaderValues, Length(LNames));
   SetLength(FHeaderNames, Length(LNames));
@@ -687,6 +711,8 @@ begin
 end;
 
 procedure TDXHttpSysResponse.BeginStream;
+var
+  LFlags: ULONG;
 begin
   CheckNotSent;
   if not Assigned(FApi.SendResponseEntityBody) then
@@ -699,7 +725,8 @@ begin
     raise EDXHttpSysError.CreateWin32(0,
       'BeginStream: the response body must be empty — stream data is sent via SendChunk');
 
-  // The framing depends on the protocol the client spoke (decided once, here):
+  // The framing (FStreamFraming, derived from the protocol version the client
+  // spoke when the response was created):
   // - HTTP/1.1: HTTP.sys does NOT add chunked framing on its own. Without
   //   Content-Length and without framing the client can only detect the end of
   //   the body by a connection close, which never comes on a kept-alive
@@ -712,12 +739,18 @@ begin
   //   the final send without MORE_DATA ends the stream (ASP.NET Core's HTTP.sys
   //   server likewise uses no chunking for HTTP/2).
   // - HTTP/1.0: no chunked coding (RFC 9112 §6.1); the body ends with the
-  //   connection, which EndStream closes.
-  FStreamFraming := GetStreamFraming(FProtocolVersion);
-  if FStreamFraming = TDXHttpSysStreamFraming.Chunked then
-    FHeaders['transfer-encoding'] := 'chunked';
-  SendHeaders(HTTP_SEND_RESPONSE_FLAG_MORE_DATA, nil, 0,
-    'HttpSendHttpResponse (BeginStream)');
+  //   connection. DISCONNECT already on the header send (with MORE_DATA, as
+  //   ASP.NET Core does) lets HTTP.sys announce "Connection: close" instead of
+  //   keep-alive; EndStream closes the connection.
+  LFlags := HTTP_SEND_RESPONSE_FLAG_MORE_DATA;
+  if FStreamFraming = TDXHttpSysStreamFraming.CloseDelimited then
+    LFlags := LFlags or HTTP_SEND_RESPONSE_FLAG_DISCONNECT;
+  FAnnounceChunked := FStreamFraming = TDXHttpSysStreamFraming.Chunked;
+  try
+    SendHeaders(LFlags, nil, 0, 'HttpSendHttpResponse (BeginStream)');
+  finally
+    FAnnounceChunked := False;
+  end;
 
   // Enter the streaming state only after the headers actually went out: a
   // failed BeginStream leaves the state NotSent, so the worker's error path
