@@ -139,6 +139,14 @@ is shutting down — so a long-lived stream stops cleanly; genuine send failures
 `EDXHttpSysError` instead. `EndStream` is a safe no-op once the stream ended, and a stream
 your handler began but did not end is completed by the worker (including on exceptions).
 
+The body framing follows the protocol the client spoke (`ARequest.ProtocolVersion`):
+**HTTP/1.1** gets `Transfer-Encoding: chunked` with the chunk framing written by DX.HttpSys
+(HTTP.sys does not frame on its own); **HTTP/2** — which HTTP.sys negotiates via ALPN on
+`https` listeners by default — gets the data unframed in HTTP/2 DATA frames, without
+`Transfer-Encoding` (forbidden in HTTP/2); **HTTP/1.0** gets the plain data and the connection
+is closed to end the body. Connection-specific headers (`Connection`, `Keep-Alive`, `Upgrade`, …)
+are dropped from HTTP/2 responses. Your handler code is the same for all of them.
+
 Two things to keep in mind for long-lived streams:
 
 - **Each stream occupies one pooled worker thread** for its whole duration. The pool is

@@ -384,6 +384,37 @@ a shared formatter removes the magic while keeping the host/scheme logic in one 
 `AddUrlPrefix` validation, the access-denied message). Deferred (YAGNI): a generic per-framework
 `BasePath` abstraction; netsh guidance for non-access-denied errors; `+:80` in the demos.
 
+### A-21 — Stream framing follows the request's protocol version (HTTP/2 fix)
+**Decision:** `TDXHttpSysRequest.ProtocolVersion` exposes the protocol the client spoke —
+`HTTP_REQUEST_FLAG_HTTP3` / `HTTP_REQUEST_FLAG_HTTP2` win, else the request-line `Version`
+(`ResolveProtocolVersion`). The worker hands it to `TDXHttpSysResponse.ProtocolVersion`, and
+`BeginStream` picks the body framing once (`GetStreamFraming`):
+- **HTTP/1.1** — `Transfer-Encoding: chunked` + chunk framing written by the library (unchanged,
+  byte-identical; HTTP.sys does not frame, see the streaming fix 6590758).
+- **HTTP/2, HTTP/3** — no `Transfer-Encoding`, no framing: the data goes to HTTP.sys as is (DATA
+  frames); `EndStream` is an empty send without `MORE_DATA` (END_STREAM).
+- **HTTP/1.0** — no `Transfer-Encoding` (RFC 9112 §6.1); `EndStream` sends with
+  `HTTP_SEND_RESPONSE_FLAG_DISCONNECT`, the connection close ends the body.
+
+`BuildHeaders` drops headers the client's protocol forbids (`IsHeaderAllowed`): connection-specific
+fields (`Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding`, `Upgrade`) on HTTP/2+,
+`Transfer-Encoding` on HTTP/1.0. HTTP/1.1 responses go out exactly as before.
+
+**Why:** HTTP.sys negotiates HTTP/2 via ALPN on every TLS listener by default (Windows 10 / Server
+2016+, unless disabled with `disablehttp2` on the sslcert binding / `EnableHttp2Tls = 0`). There the
+library still announced `Transfer-Encoding: chunked` — forbidden in HTTP/2 (RFC 9113 §8.2.2: such a
+response is malformed) — and its chunk framing bytes would reach the client as body data. ASP.NET
+Core's HTTP.sys server makes the same split: it only chunks for HTTP/1.1 requests and lets HTTP.sys
+frame HTTP/2 (`Response.ComputeHeaders`, `ResponseBody.BuildDataChunks`); it also resolves the
+version from the HTTP2/HTTP3 flags first (`NativeRequestContext.GetVersion`).
+`HTTP_SEND_RESPONSE_FLAG_AUTOMATIC_CHUNKING` (Windows SDK 10.0.26100) would let HTTP.sys chunk
+HTTP/1.1 itself, but it is too new for the supported Windows versions.
+
+**How to apply:** Never set framing headers by hand in handlers; let `BeginStream` choose. Guarded by
+`TStreamFramingTests` (pure decisions), `Http11RawWire_ChunkFramingUnchanged` and
+`Http10RawWire_NoChunkedCoding_ClosesConnection` (wire level over plain http). The HTTP/2 wire check
+needs a TLS binding, i.e. elevation: `tests-integration/Http2StreamingCheck.ps1`.
+
 <!-- New architecture decisions are appended below. -->
 
 ---

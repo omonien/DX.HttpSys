@@ -42,6 +42,26 @@ Requirements: a recent Delphi (the build script auto-detects it) and `git` on PA
 The tests bind to `http://localhost:<port>/`, so no admin rights or URL ACL are
 needed.
 
+## HTTP/2 streaming live check (elevated)
+
+HTTP.sys negotiates HTTP/2 only on TLS listeners, and binding a TLS certificate needs
+administrator rights, so the streaming wire behaviour over HTTP/2 is checked by a separate
+script instead of the `tests/` suite (which pins the framing decisions as unit tests):
+
+```powershell
+# elevated PowerShell 7:
+tests-integration\Http2StreamingCheck.ps1             # default port 44399, Win64 Debug
+tests-integration\Http2StreamingCheck.ps1 -NoTls      # unelevated plumbing self-test (HTTP/1.1 only)
+```
+
+It builds `demo/07.Sse`, creates a temporary self-signed certificate in `LocalMachine\My`,
+binds it to `127.0.0.1:<Port>` (`netsh http add sslcert`), streams `/sse/` once over HTTP/2 and
+once over HTTP/1.1 with .NET `HttpClient` (exact protocol version) and asserts: HTTP/2 really
+negotiated, no `Transfer-Encoding`, body exactly the SSE events (no chunk framing bytes); HTTP/1.1
+`Transfer-Encoding: chunked` with the exact framing on the wire. It removes the binding and the
+certificate (with its private key) afterwards, also on failure, and refuses to run if the port
+already has an sslcert binding.
+
 ## Adding another wrapper
 
 When DX.HttpSys gains another adapter (mORMot, …), add the dependency to

@@ -389,6 +389,10 @@ begin
           // Wire up cooperative cancellation (Response.Cancelled).
           Response.OnQueryCancelled := QueryCancelled;
 
+          // The response's framing and allowed headers follow the protocol the
+          // client spoke (HTTP/1.0, 1.1, 2 or 3).
+          Response.ProtocolVersion := Request.ProtocolVersion;
+
           // Apply the configured Server header as a default the handler may override.
           if FPool.ServerHeader <> '' then
             Response.Headers['server'] := FPool.ServerHeader;

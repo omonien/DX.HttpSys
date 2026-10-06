@@ -140,6 +140,14 @@ Sendefehler lösen stattdessen `EDXHttpSysError` aus. `EndStream` ist nach Strea
 sicherer No-op, und einen Stream, den der Handler begonnen, aber nicht beendet hat, schließt
 der Worker ab (auch bei Exceptions).
 
+Das Framing des Bodys folgt dem Protokoll des Clients (`ARequest.ProtocolVersion`):
+**HTTP/1.1** erhält `Transfer-Encoding: chunked` mit dem Chunk-Framing von DX.HttpSys (HTTP.sys
+framt nicht selbst); **HTTP/2** — das HTTP.sys auf `https`-Listenern standardmäßig per ALPN
+aushandelt — erhält die Daten ungeframt in HTTP/2-DATA-Frames, ohne `Transfer-Encoding` (in
+HTTP/2 verboten); **HTTP/1.0** erhält die reinen Daten, das Body-Ende markiert das Schließen der
+Verbindung. Verbindungsspezifische Header (`Connection`, `Keep-Alive`, `Upgrade`, …) entfallen in
+HTTP/2-Antworten. Der Handler-Code ist für alle Fälle derselbe.
+
 Zwei Dinge sind bei langlebigen Streams zu beachten:
 
 - **Jeder Stream belegt einen Worker-Thread des Pools** für seine gesamte Dauer. Der Pool
