@@ -393,16 +393,25 @@ framing once (`GetStreamFraming`):
 - **HTTP/1.1** — `Transfer-Encoding: chunked` + chunk framing written by the library (unchanged,
   byte-identical; HTTP.sys does not frame, see the streaming fix 6590758).
 - **HTTP/2, HTTP/3** — no `Transfer-Encoding`, no framing: the data goes to HTTP.sys as is (DATA
-  frames); `EndStream` is an empty send without `MORE_DATA` (END_STREAM).
-- **HTTP/1.0** — no `Transfer-Encoding` (RFC 9112 §6.1); the header send already carries
-  `HTTP_SEND_RESPONSE_FLAG_DISCONNECT` (with `MORE_DATA`, as ASP.NET Core does, so HTTP.sys does
-  not announce keep-alive) and `EndStream` sends with it, the connection close ends the body.
+  frames); `EndStream` is an empty send with `HTTP_SEND_RESPONSE_FLAG_DISCONNECT`. The
+  `HttpSendHttpResponse` docs require DISCONNECT to end a response that has neither Content-Length
+  nor Transfer-Encoding, and ASP.NET Core's final send for HTTP/2 is exactly this; on HTTP/2 it
+  ends the stream — only DISCONNECT + GOAWAY tears down the connection (`http.h`).
+- **HTTP/1.0** — no `Transfer-Encoding` (RFC 9112 §6.1), `Connection: close` (replacing a
+  handler's keep-alive); the header send carries `DISCONNECT | MORE_DATA` and `EndStream` an empty
+  DISCONNECT send, the connection close ends the body. The docs call `DISCONNECT | MORE_DATA` on
+  `HttpSendHttpResponse` "undefined", but HTTP.sys writes the `Connection` header from the flags:
+  with `MORE_DATA` alone it announced `Connection: keep-alive` to a keep-alive HTTP/1.0 client
+  despite our `close` (verified on the wire). ASP.NET Core sends the same combination;
+  `Http10RawWire_NoChunkedCoding_ClosesConnection` guards it.
 
 `BuildHeaders` drops headers the client's protocol forbids (`IsHeaderAllowed`): connection-specific
 fields (`Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding`, `Upgrade`) on HTTP/2+,
 `Transfer-Encoding` on HTTP/1.0. HTTP/1.1 responses go out exactly as before. The chunked stream's
 own `Transfer-Encoding` is added by `BuildHeaders` during the `BeginStream` header send only (not
-stored in `Headers`), so a failed `BeginStream` no longer leaves it behind for the worker's 500.
+stored in `Headers`; likewise the HTTP/1.0 `Connection: close`), so a failed `BeginStream` no
+longer leaves it behind for the worker's 500. Side effect: `Headers['transfer-encoding']` reads
+empty after `BeginStream`.
 
 **Why:** HTTP.sys negotiates HTTP/2 via ALPN on every TLS listener by default (Windows 10 / Server
 2016+, unless disabled with `disablehttp2` on the sslcert binding / `EnableHttp2Tls = 0`). There the

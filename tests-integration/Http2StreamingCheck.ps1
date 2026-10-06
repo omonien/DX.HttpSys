@@ -24,7 +24,7 @@
 # It never touches a binding it did not create: if 127.0.0.1:<Port> already has
 # an sslcert binding, it stops before changing anything.
 #
-# USAGE (elevated PowerShell 7):
+# USAGE (elevated PowerShell 7.2 or later):
 #   ./tests-integration/Http2StreamingCheck.ps1
 #   ./tests-integration/Http2StreamingCheck.ps1 -Port 44399 -Platform Win32
 #   ./tests-integration/Http2StreamingCheck.ps1 -NoTls   # plumbing self-test:
@@ -33,7 +33,7 @@
 # Exit code 0 = all checks passed, 1 = a check failed or the setup failed.
 # =============================================================================
 
-#Requires -Version 7.0
+#Requires -Version 7.2
 
 param(
     [int]$Port        = 44399,
@@ -180,18 +180,32 @@ if (-not (Test-Path $exe)) { Write-Host "Not found: $exe" -ForegroundColor Red; 
 # its persisted private key (CNG). Returns $true on success.
 function Remove-TemporaryCertificate([System.Security.Cryptography.X509Certificates.X509Certificate2]$ACert,
                                      [string]$AStorePath) {
+    $ok  = $true
     $rsa = $null
     try {
         $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($ACert)
+    } catch {
+        Write-Host "Could not open the private key of $($ACert.Thumbprint): $($_.Exception.Message)" -ForegroundColor Yellow
+        $ok = $false
+    }
+    # The certificate goes in any case, independent of the key handling.
+    try {
         Remove-Item -Path (Join-Path $AStorePath $ACert.Thumbprint) -Force
-        if ($rsa -is [System.Security.Cryptography.RSACng]) { $rsa.Key.Delete() }
-        return $true
     } catch {
         Write-Host "Could not remove certificate $($ACert.Thumbprint): $($_.Exception.Message)" -ForegroundColor Yellow
-        return $false
-    } finally {
-        if ($rsa) { $rsa.Dispose() }
+        $ok = $false
     }
+    if ($rsa) {
+        try {
+            if ($rsa -is [System.Security.Cryptography.RSACng]) { $rsa.Key.Delete() }
+        } catch {
+            Write-Host "Could not delete the private key of $($ACert.Thumbprint): $($_.Exception.Message)" -ForegroundColor Yellow
+            $ok = $false
+        } finally {
+            $rsa.Dispose()
+        }
+    }
+    return $ok
 }
 
 # Runs one group of checks; an exception fails the group but not the others.

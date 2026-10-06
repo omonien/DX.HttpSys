@@ -47,9 +47,9 @@ type
   ///   <c>Chunked</c> — HTTP/1.1: "Transfer-Encoding: chunked" plus chunk
   ///   framing written by DX.HttpSys (HTTP.sys does not frame on its own).
   ///   <c>ProtocolFrames</c> — HTTP/2 and HTTP/3: the protocol frames the body
-  ///   itself (HTTP.sys emits DATA frames, the final send without MORE_DATA ends
-  ///   the stream); Transfer-Encoding is forbidden there (RFC 9113 §8.2.2,
-  ///   RFC 9114 §4.2) and chunk framing would arrive as body bytes.
+  ///   itself (HTTP.sys emits DATA frames, the final send ends the stream);
+  ///   Transfer-Encoding is forbidden there (RFC 9113 §8.2.2, RFC 9114 §4.2)
+  ///   and chunk framing would arrive as body bytes.
   ///   <c>CloseDelimited</c> — HTTP/1.0 and older: chunked coding must not be
   ///   used (RFC 9112 §6.1), the body ends when the connection closes.
   /// </remarks>
@@ -84,11 +84,12 @@ type
     FOnQueryCancelled: TDXHttpSysQueryCancelled;
     FProtocolVersion: THTTP_VERSION;
     FStreamFraming:   TDXHttpSysStreamFraming;
-    // True only while BeginStream sends the headers of a chunked stream:
-    // BuildHeaders then adds "Transfer-Encoding: chunked". Kept out of FHeaders
-    // so a failed BeginStream leaves no stale header behind for the error
-    // response the worker sends next.
-    FAnnounceChunked: Boolean;
+    // True only while BeginStream sends the stream's headers: BuildHeaders then
+    // adds the framing headers ("Transfer-Encoding: chunked" for a chunked
+    // stream, "Connection: close" for a close-delimited one). Kept out of
+    // FHeaders so a failed BeginStream leaves no stale header behind for the
+    // error response the worker sends next.
+    FSendingStreamHeaders: Boolean;
 
     // Buffers that must outlive the HttpSendHttpResponse call: the response
     // struct holds raw pointers into these, so they are instance fields kept
@@ -481,7 +482,8 @@ var
   LIndex:   Integer;
   LUnknown: Integer;
   LVersion: THTTP_VERSION;
-  LChunked: Boolean;
+  LFraming: TDXHttpSysStreamFraming;
+  LStream:  Boolean;
 begin
   // Collect the headers first (a closure cannot capture the `out` ARawResp),
   // then write them into ARawResp and the backing buffers in a plain loop. The
@@ -490,28 +492,42 @@ begin
   SetLength(LNames, 0);
   SetLength(LValues, 0);
   LVersion := FProtocolVersion;
-  LChunked := FAnnounceChunked;
+  LFraming := FStreamFraming;
+  LStream  := FSendingStreamHeaders;
   FHeaders.EnumHeaders(
     procedure(AName, AValue: string)
     begin
       // Headers the client's protocol forbids (connection-specific fields on
       // HTTP/2+, Transfer-Encoding on HTTP/1.0) are dropped here, so neither the
-      // library nor a handler can produce a malformed response. A chunked
-      // stream's own Transfer-Encoding replaces any the handler set.
-      if not IsHeaderAllowed(AName, LVersion)
-        or (LChunked and SameText(AName, 'transfer-encoding')) then
+      // library nor a handler can produce a malformed response. The stream's
+      // own framing headers (added below) replace any the handler set.
+      if not IsHeaderAllowed(AName, LVersion) then
+        Exit;
+      if LStream and (LFraming = TDXHttpSysStreamFraming.Chunked)
+        and SameText(AName, 'transfer-encoding') then
+        Exit;
+      if LStream and (LFraming = TDXHttpSysStreamFraming.CloseDelimited)
+        and (SameText(AName, 'connection') or SameText(AName, 'keep-alive')) then
         Exit;
       SetLength(LNames, Length(LNames) + 1);
       SetLength(LValues, Length(LValues) + 1);
       LNames[High(LNames)]   := AName;
       LValues[High(LValues)] := AValue;
     end);
-  if LChunked then
+  if LStream and (LFraming <> TDXHttpSysStreamFraming.ProtocolFrames) then
   begin
     SetLength(LNames, Length(LNames) + 1);
     SetLength(LValues, Length(LValues) + 1);
-    LNames[High(LNames)]   := 'transfer-encoding';
-    LValues[High(LValues)] := 'chunked';
+    if LFraming = TDXHttpSysStreamFraming.Chunked then
+    begin
+      LNames[High(LNames)]   := 'transfer-encoding';
+      LValues[High(LValues)] := 'chunked';
+    end
+    else
+    begin
+      LNames[High(LNames)]   := 'connection';
+      LValues[High(LValues)] := 'close';
+    end;
   end;
 
   SetLength(FHeaderValues, Length(LNames));
@@ -735,21 +751,26 @@ begin
   //   the framing in SendChunk/EndStream — the same user-mode approach .NET's
   //   HttpListener and ASP.NET Core's HTTP.sys server take.
   // - HTTP/2, HTTP/3: Transfer-Encoding is forbidden and chunk framing would
-  //   reach the client as body bytes. HTTP.sys frames the body in DATA frames;
-  //   the final send without MORE_DATA ends the stream (ASP.NET Core's HTTP.sys
-  //   server likewise uses no chunking for HTTP/2).
+  //   reach the client as body bytes. HTTP.sys frames the body in DATA frames
+  //   (ASP.NET Core's HTTP.sys server likewise uses no chunking for HTTP/2).
   // - HTTP/1.0: no chunked coding (RFC 9112 §6.1); the body ends with the
-  //   connection. DISCONNECT already on the header send (with MORE_DATA, as
-  //   ASP.NET Core does) lets HTTP.sys announce "Connection: close" instead of
-  //   keep-alive; EndStream closes the connection.
+  //   connection, so the headers announce "Connection: close" (replacing any
+  //   keep-alive the handler set) and EndStream closes the connection.
+  //   HTTP.sys writes the Connection header itself from the send flags: with
+  //   MORE_DATA alone it announced "Connection: keep-alive" to a keep-alive
+  //   HTTP/1.0 client despite our "close" (verified on the wire). So the header
+  //   send also carries DISCONNECT. The HttpSendHttpResponse docs call
+  //   DISCONNECT + MORE_DATA "undefined"; ASP.NET Core's HTTP.sys server sends
+  //   exactly this combination for close-delimited responses, and
+  //   Http10RawWire_NoChunkedCoding_ClosesConnection guards the behaviour.
   LFlags := HTTP_SEND_RESPONSE_FLAG_MORE_DATA;
   if FStreamFraming = TDXHttpSysStreamFraming.CloseDelimited then
     LFlags := LFlags or HTTP_SEND_RESPONSE_FLAG_DISCONNECT;
-  FAnnounceChunked := FStreamFraming = TDXHttpSysStreamFraming.Chunked;
+  FSendingStreamHeaders := True;
   try
     SendHeaders(LFlags, nil, 0, 'HttpSendHttpResponse (BeginStream)');
   finally
-    FAnnounceChunked := False;
+    FSendingStreamHeaders := False;
   end;
 
   // Enter the streaming state only after the headers actually went out: a
@@ -823,13 +844,14 @@ begin
         LChunk      := BuildDataChunk(@LTerminator[0], Length(LTerminator));
         LResult     := SendEntityBody(0, 1, @LChunk);
       end;
-    TDXHttpSysStreamFraming.CloseDelimited:
-      // HTTP/1.0: the end of the body is the end of the connection.
-      LResult := SendEntityBody(HTTP_SEND_RESPONSE_FLAG_DISCONNECT, 0, nil);
   else
-    // HTTP/2, HTTP/3: an empty final send makes HTTP.sys end the stream
-    // (END_STREAM); the connection itself stays up for other streams.
-    LResult := SendEntityBody(0, 0, nil);
+    // No Content-Length and no Transfer-Encoding: per the HttpSendHttpResponse
+    // docs the application ends such a response with DISCONNECT — the same
+    // final send ASP.NET Core's HTTP.sys server makes for HTTP/1.0 and HTTP/2.
+    // HTTP/1.0: the connection closes, which ends the body. HTTP/2, HTTP/3: it
+    // ends the stream; only DISCONNECT plus GOAWAY would tear down the
+    // connection (http.h), so other streams on it are unaffected.
+    LResult := SendEntityBody(HTTP_SEND_RESPONSE_FLAG_DISCONNECT, 0, nil);
   end;
 
   if (LResult = ERROR_SUCCESS) or IsStreamOverError(LResult) then

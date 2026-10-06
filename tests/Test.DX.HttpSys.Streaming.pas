@@ -23,7 +23,8 @@ unit Test.DX.HttpSys.Streaming;
 interface
 
 uses
-  DUnitX.TestFramework;
+  DUnitX.TestFramework,
+  DX.HttpSys.Api;
 
 type
   [TestFixture]
@@ -152,7 +153,7 @@ type
   [TestFixture]
   TStreamSendSequenceTests = class
   private
-    FApi: TObject; // TDXHttpSysApi with fake send functions
+    FApi: TDXHttpSysApi; // never loaded; only the two send functions are faked
   public
     [Setup]
     procedure Setup;
@@ -160,7 +161,7 @@ type
     procedure TearDown;
 
     // HTTP/2: no Transfer-Encoding, no connection-specific headers, unframed
-    // DATA, an empty final send without MORE_DATA.
+    // DATA, an empty final send with DISCONNECT (ends the stream).
     [Test]
     procedure Http2_Stream_UnframedDataAndEmptyFinalSend;
 
@@ -172,8 +173,9 @@ type
     [Test]
     procedure Http11_Stream_ChunkFramingUnchanged;
 
-    // HTTP/1.0: no Transfer-Encoding, DISCONNECT on the header send and on the
-    // final send, unframed data.
+    // HTTP/1.0: no Transfer-Encoding, "Connection: close" replacing the
+    // handler's keep-alive, DISCONNECT on the header send, unframed data, an
+    // empty final send with DISCONNECT.
     [Test]
     procedure Http10_Stream_CloseDelimited;
 
@@ -182,7 +184,7 @@ type
     procedure Http2_Send_DropsConnectionSpecificHeaders;
 
     // A failed BeginStream leaves no "Transfer-Encoding: chunked" behind for the
-    // error response the worker sends next (it has a Content-Length body).
+    // error response the worker sends next (an ordinary non-streamed response).
     [Test]
     procedure FailedBeginStream_ErrorResponseHasNoTransferEncoding;
   end;
@@ -199,7 +201,6 @@ uses
   Winapi.WinSock2,
   Winapi.Windows,
   DX.HttpSys.Api.Types,
-  DX.HttpSys.Api,
   DX.HttpSys.Request,
   DX.HttpSys.Response,
   DX.HttpSys.ThreadPool,
@@ -500,13 +501,16 @@ begin
 end;
 
 // A streaming handler that echoes the detected protocol version as its first
-// chunk, then a second chunk, then ends the stream.
-function VersionEchoHandler: IDXHttpSysRequestHandler;
+// chunk, then a second chunk, then ends the stream. AKeepAlive adds the
+// "Connection: keep-alive" many SSE handlers set by habit.
+function VersionEchoHandler(AKeepAlive: Boolean = False): IDXHttpSysRequestHandler;
 begin
   Result := TProcHandler.Create(
     procedure(AReq: TDXHttpSysRequest; AResp: TDXHttpSysResponse)
     begin
       AResp.Headers['content-type'] := 'text/plain';
+      if AKeepAlive then
+        AResp.Headers['connection'] := 'keep-alive';
       AResp.BeginStream;
       AResp.SendChunk(Utf8Chunk(Format('%d.%d|',
         [AReq.ProtocolVersion.MajorVersion, AReq.ProtocolVersion.MinorVersion])));
@@ -1071,7 +1075,9 @@ begin
 
   LErrors := TErrorCollector.Create;
   try
-    LServer := StartServer(LPort, VersionEchoHandler, LErrors.Report);
+    // The handler asks for keep-alive too: a close-delimited stream must
+    // override it with "Connection: close".
+    LServer := StartServer(LPort, VersionEchoHandler(True), LErrors.Report);
     try
       // Keep-Alive asked for on purpose: the unframed body can only end with
       // the connection, so the server must close it regardless.
@@ -1089,6 +1095,8 @@ begin
       'no chunked coding for an HTTP/1.0 client');
     Assert.DoesNotContain(LHead, 'keep-alive', True,
       'a close-delimited body must not announce keep-alive: ' + LHead);
+    Assert.Contains(LHead, #13#10'Connection: close'#13#10, True,
+      'close-delimited body announces the close: ' + LHead);
     Assert.AreEqual('1.0|tail', LBody, 'unframed body');
     Assert.AreEqual('', LErrors.Text, 'no worker-side errors');
   finally
@@ -1254,15 +1262,12 @@ begin
 end;
 
 procedure TStreamSendSequenceTests.Setup;
-var
-  LApi: TDXHttpSysApi;
 begin
   GSendLog := TStringList.Create;
   GNextHeaderResult := ERROR_SUCCESS;
-  LApi := TDXHttpSysApi.Create; // never loaded: only the two fakes are wired
-  LApi.SendHttpResponse       := FakeSendHttpResponse;
-  LApi.SendResponseEntityBody := FakeSendResponseEntityBody;
-  FApi := LApi;
+  FApi := TDXHttpSysApi.Create; // never loaded: only the two fakes are wired
+  FApi.SendHttpResponse       := FakeSendHttpResponse;
+  FApi.SendResponseEntityBody := FakeSendResponseEntityBody;
 end;
 
 procedure TStreamSendSequenceTests.TearDown;
@@ -1277,14 +1282,14 @@ begin
     'H flags=2 te= connection= keep-alive= upgrade= content-length= unknown=x-accel-buffering; body='#13#10 +
     'B flags=2 chunks=1 data=data: a\n\n'#13#10 +
     'B flags=2 chunks=1 data=data: bc\n\n'#13#10 +
-    'B flags=0 chunks=0 data=',
-    RecordStream(TDXHttpSysApi(FApi), 2, 0));
+    'B flags=1 chunks=0 data=',
+    RecordStream(FApi, 2, 0));
 end;
 
 procedure TStreamSendSequenceTests.Http3_Stream_UnframedDataAndEmptyFinalSend;
 begin
-  Assert.AreEqual(RecordStream(TDXHttpSysApi(FApi), 2, 0),
-    RecordStream(TDXHttpSysApi(FApi), 3, 0));
+  Assert.AreEqual(RecordStream(FApi, 2, 0),
+    RecordStream(FApi, 3, 0));
 end;
 
 procedure TStreamSendSequenceTests.Http11_Stream_ChunkFramingUnchanged;
@@ -1294,17 +1299,17 @@ begin
     'B flags=2 chunks=1 data=9\r\ndata: a\n\n\r\n'#13#10 +
     'B flags=2 chunks=1 data=A\r\ndata: bc\n\n\r\n'#13#10 +
     'B flags=0 chunks=1 data=0\r\n\r\n',
-    RecordStream(TDXHttpSysApi(FApi), 1, 1));
+    RecordStream(FApi, 1, 1));
 end;
 
 procedure TStreamSendSequenceTests.Http10_Stream_CloseDelimited;
 begin
   Assert.AreEqual(
-    'H flags=3 te= connection=keep-alive keep-alive= upgrade= content-length= unknown=x-accel-buffering; body='#13#10 +
+    'H flags=3 te= connection=close keep-alive= upgrade= content-length= unknown=x-accel-buffering; body='#13#10 +
     'B flags=2 chunks=1 data=data: a\n\n'#13#10 +
     'B flags=2 chunks=1 data=data: bc\n\n'#13#10 +
     'B flags=1 chunks=0 data=',
-    RecordStream(TDXHttpSysApi(FApi), 1, 0));
+    RecordStream(FApi, 1, 0));
 end;
 
 procedure TStreamSendSequenceTests.Http2_Send_DropsConnectionSpecificHeaders;
@@ -1312,7 +1317,7 @@ var
   LResponse: TDXHttpSysResponse;
 begin
   GSendLog.Clear;
-  LResponse := TDXHttpSysResponse.Create(TDXHttpSysApi(FApi), 1, 1, MakeVersion(2, 0));
+  LResponse := TDXHttpSysResponse.Create(FApi, 1, 1, MakeVersion(2, 0));
   try
     LResponse.Headers['connection']        := 'close';
     LResponse.Headers['keep-alive']        := 'timeout=5';
@@ -1335,7 +1340,7 @@ var
 begin
   GSendLog.Clear;
   GNextHeaderResult := ERROR_INVALID_PARAMETER; // the BeginStream header send fails
-  LResponse := TDXHttpSysResponse.Create(TDXHttpSysApi(FApi), 1, 1, MakeVersion(1, 1));
+  LResponse := TDXHttpSysResponse.Create(FApi, 1, 1, MakeVersion(1, 1));
   try
     Assert.WillRaise(
       procedure
