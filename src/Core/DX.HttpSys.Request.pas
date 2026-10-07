@@ -75,6 +75,7 @@ type
     FRequestId:     HTTP_REQUEST_ID;
     FUrlContext:    HTTP_URL_CONTEXT;
     FContentLength: Int64;
+    FProtocolVersion: THTTP_VERSION;
 
     procedure ParseFromRaw;
     procedure ParseKnownHeaders;
@@ -121,6 +122,25 @@ type
 
     // Routing context from the UrlGroup setup (0 if not set)
     property UrlContext:    HTTP_URL_CONTEXT read FUrlContext;
+
+    // HTTP protocol version the request arrived over: 1.0, 1.1, 2.0 (HTTP/2,
+    // TLS listeners only) or 3.0 (HTTP/3). See ResolveProtocolVersion.
+    property ProtocolVersion: THTTP_VERSION read FProtocolVersion;
+
+    /// <summary>
+    ///   Derives the protocol version from the raw HTTP_REQUEST fields: the
+    ///   HTTP_REQUEST_FLAG_HTTP3 / HTTP_REQUEST_FLAG_HTTP2 flags win, otherwise
+    ///   the request line's Version is used.
+    /// </summary>
+    /// <remarks>
+    ///   The flags are authoritative because HTTP.sys documents them as "the
+    ///   request was received over HTTP/2 (HTTP/3)"; the Version field is the
+    ///   request-line version, which HTTP/2 and HTTP/3 do not have. ASP.NET Core's
+    ///   HTTP.sys server resolves the version the same way
+    ///   (NativeRequestContext.GetVersion). Pure function, unit-tested.
+    /// </remarks>
+    class function ResolveProtocolVersion(AFlags: ULONG;
+      const ARawVersion: THTTP_VERSION): THTTP_VERSION; static;
   end;
 
 implementation
@@ -218,6 +238,7 @@ begin
 
   FRequestId  := R^.RequestId;
   FUrlContext := R^.UrlContext;
+  FProtocolVersion := ResolveProtocolVersion(R^.Flags, R^.Version);
 
   // HTTP verb
   if R^.Verb in [Low(HTTP_VERB)..High(HTTP_VERB)] then
@@ -313,6 +334,23 @@ begin
       Inc(UH);
     end;
   end;
+end;
+
+class function TDXHttpSysRequest.ResolveProtocolVersion(AFlags: ULONG;
+  const ARawVersion: THTTP_VERSION): THTTP_VERSION;
+begin
+  if (AFlags and HTTP_REQUEST_FLAG_HTTP3) <> 0 then
+  begin
+    Result.MajorVersion := 3;
+    Result.MinorVersion := 0;
+  end
+  else if (AFlags and HTTP_REQUEST_FLAG_HTTP2) <> 0 then
+  begin
+    Result.MajorVersion := 2;
+    Result.MinorVersion := 0;
+  end
+  else
+    Result := ARawVersion;
 end;
 
 function TDXHttpSysRequest.LoadBody: TStream;

@@ -5,8 +5,14 @@
 ///   Demonstrates the streaming API (BeginStream/SendChunk/EndStream): every
 ///   GET /sse/ connection receives ten events, one per second. Test with:
 ///     curl -N http://localhost:80/sse/
-///   The response uses chunked transfer encoding: DX.HttpSys announces it and
-///   emits the chunk framing itself (HTTP.sys does not frame on its own).
+///   On HTTP/1.1 the response uses chunked transfer encoding: DX.HttpSys
+///   announces it and emits the chunk framing itself (HTTP.sys does not frame
+///   on its own). On HTTP/2 (https listeners, negotiated by HTTP.sys via ALPN)
+///   the events travel unframed in HTTP/2 DATA frames.
+///
+///   An optional first parameter replaces the URL prefix, e.g.
+///     SseDemo https://127.0.0.1:44399/sse/
+///   (used by tests-integration/Http2StreamingCheck.ps1).
 ///
 ///   It binds under a distinct path prefix on the shared port 80, so it can run
 ///   simultaneously with the Standalone (/standalone), WiRL (/rest), WebBroker
@@ -81,20 +87,24 @@ begin
 end;
 
 const
-  cPrefix = 'http://localhost:80/sse/';
+  cDefaultPrefix = 'http://localhost:80/sse/';
 
 var
   LServer: TDXHttpSysServer;
+  LPrefix: string;
 begin
+  LPrefix := cDefaultPrefix;
+  if ParamCount >= 1 then
+    LPrefix := ParamStr(1);
   try
     LServer := TDXHttpSysServer.Create;
     try
       LServer.Handler := TSseHandler.Create;
-      LServer.AddUrlPrefix(cPrefix);
+      LServer.AddUrlPrefix(LPrefix);
       LServer.Start;
 
-      Writeln('DX.HttpSys SSE demo listening on ' + cPrefix);
-      Writeln('Try:  curl -N ' + cPrefix);
+      Writeln('DX.HttpSys SSE demo listening on ' + LPrefix);
+      Writeln('Try:  curl -N ' + LPrefix);
       Writeln('Press <Enter> to stop.');
       Readln;
 

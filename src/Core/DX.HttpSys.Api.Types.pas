@@ -56,8 +56,13 @@ const
   HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY  = $00000001;
   HTTP_RECEIVE_REQUEST_FLAG_FLUSH_BODY = $00000002;
 
-  // HTTP_REQUEST.Flags bits
+  // HTTP_REQUEST.Flags bits (http.h). HTTP2/HTTP3 mark a request that arrived
+  // over HTTP/2 (TLS + ALPN) or HTTP/3 (QUIC); the response must then not use
+  // HTTP/1.1 framing (Transfer-Encoding: chunked) — see TDXHttpSysResponse.
   HTTP_REQUEST_FLAG_MORE_ENTITY_BODY_EXISTS = $00000001;
+  HTTP_REQUEST_FLAG_IP_ROUTED               = $00000002;
+  HTTP_REQUEST_FLAG_HTTP2                   = $00000004;
+  HTTP_REQUEST_FLAG_HTTP3                   = $00000008;
 
   HTTP_SEND_RESPONSE_FLAG_DISCONNECT   = $00000001;
   HTTP_SEND_RESPONSE_FLAG_MORE_DATA    = $00000002;

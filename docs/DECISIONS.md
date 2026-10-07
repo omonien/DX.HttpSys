@@ -384,6 +384,55 @@ a shared formatter removes the magic while keeping the host/scheme logic in one 
 `AddUrlPrefix` validation, the access-denied message). Deferred (YAGNI): a generic per-framework
 `BasePath` abstraction; netsh guidance for non-access-denied errors; `+:80` in the demos.
 
+### A-21 — Stream framing follows the request's protocol version (HTTP/2 fix)
+**Decision:** `TDXHttpSysRequest.ProtocolVersion` exposes the protocol the client spoke —
+`HTTP_REQUEST_FLAG_HTTP3` / `HTTP_REQUEST_FLAG_HTTP2` win, else the request-line `Version`
+(`ResolveProtocolVersion`). The worker passes it to the new `TDXHttpSysResponse` constructor
+overload (read-only `ProtocolVersion`; the old constructor means HTTP/1.1), which picks the body
+framing once (`GetStreamFraming`):
+- **HTTP/1.1** — `Transfer-Encoding: chunked` + chunk framing written by the library (unchanged,
+  byte-identical; HTTP.sys does not frame, see the streaming fix 6590758).
+- **HTTP/2, HTTP/3** — no `Transfer-Encoding`, no framing: the data goes to HTTP.sys as is (DATA
+  frames); `EndStream` is an empty send with `HTTP_SEND_RESPONSE_FLAG_DISCONNECT`. The
+  `HttpSendHttpResponse` docs require DISCONNECT to end a response that has neither Content-Length
+  nor Transfer-Encoding, and ASP.NET Core's final send for HTTP/2 is exactly this; on HTTP/2 it
+  ends the stream — only DISCONNECT + GOAWAY tears down the connection (`http.h`).
+- **HTTP/1.0** — no `Transfer-Encoding` (RFC 9112 §6.1), `Connection: close` (replacing a
+  handler's keep-alive); the header send carries `DISCONNECT | MORE_DATA` and `EndStream` an empty
+  DISCONNECT send, the connection close ends the body. The docs call `DISCONNECT | MORE_DATA` on
+  `HttpSendHttpResponse` "undefined", but HTTP.sys writes the `Connection` header from the flags:
+  with `MORE_DATA` alone it announced `Connection: keep-alive` to a keep-alive HTTP/1.0 client
+  despite our `close` (verified on the wire). ASP.NET Core sends the same combination;
+  `Http10RawWire_NoChunkedCoding_ClosesConnection` guards it.
+
+`BuildHeaders` drops headers the client's protocol forbids (`IsHeaderAllowed`): connection-specific
+fields (`Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding`, `Upgrade`) on HTTP/2+,
+`Transfer-Encoding` on HTTP/1.0. HTTP/1.1 responses go out exactly as before. The chunked stream's
+own `Transfer-Encoding` is added by `BuildHeaders` during the `BeginStream` header send only (not
+stored in `Headers`; likewise the HTTP/1.0 `Connection: close`), so a failed `BeginStream` no
+longer leaves it behind for the worker's 500. Side effect: `Headers['transfer-encoding']` reads
+empty after `BeginStream`.
+
+**Why:** HTTP.sys negotiates HTTP/2 via ALPN on every TLS listener by default (Windows 10 / Server
+2016+, unless disabled with `disablehttp2` on the sslcert binding / `EnableHttp2Tls = 0`). There the
+library still announced `Transfer-Encoding: chunked` — forbidden in HTTP/2 (RFC 9113 §8.2.2: such a
+response is malformed) — and its chunk framing bytes would reach the client as body data. ASP.NET
+Core's HTTP.sys server makes the same split: it only chunks for HTTP/1.1 requests and lets HTTP.sys
+frame HTTP/2 (`Response.ComputeHeaders`, `ResponseBody.BuildDataChunks`); it also resolves the
+version from the HTTP2/HTTP3 flags first (`NativeRequestContext.GetVersion`).
+`HTTP_SEND_RESPONSE_FLAG_AUTOMATIC_CHUNKING` (Windows SDK 10.0.26100) would let HTTP.sys chunk
+HTTP/1.1 itself, but it is too new for the supported Windows versions.
+
+**How to apply:** Never set framing headers by hand in handlers; let `BeginStream` choose. Guarded by
+`TStreamFramingTests` (pure decisions), `TStreamSendSequenceTests` (the exact HTTP.sys send calls per
+protocol, through recording fakes for `SendHttpResponse`/`SendResponseEntityBody` — runs the HTTP/2
+path without elevation), `Http11RawWire_ChunkFramingUnchanged` and
+`Http10RawWire_NoChunkedCoding_ClosesConnection` (wire level over plain http). The HTTP/2 wire check
+needs a TLS binding, i.e. elevation: `tests-integration/Http2StreamingCheck.ps1`. Open: whether
+HTTP.sys reports an HTTP/2 client reset (RST_STREAM) on the final send with a code outside
+`IsStreamOverError` (ASP.NET Core also tolerates `ERROR_INVALID_PARAMETER` there) — to be observed in
+an elevated run; HEAD requests still get stream bytes (pre-existing).
+
 <!-- New architecture decisions are appended below. -->
 
 ---
