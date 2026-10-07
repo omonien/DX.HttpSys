@@ -548,7 +548,7 @@ Stabilität ist explizites Primärziel. Die Implementierung muss unter Dauer- un
 ### Milestone 10 – Streaming & HTTP/2
 - [x] `BeginStream`/`SendChunk`/`EndStream` (SSE), Demo 07
 - [x] Protokollbewusstes Framing (`ProtocolVersion`, HTTP/1.1 chunked, HTTP/2+ durch HTTP.sys, HTTP/1.0 close-delimited)
-- [ ] HTTP/2-Wire-Check (`tests-integration/Http2StreamingCheck.ps1`, erhöhte Rechte) auf einem Rechner mit Administratorrechten durchführen (benötigt eine TLS-Bindung; bisher nicht Teil der CI)
+- [x] HTTP/2-Wire-Check (`tests-integration/Http2StreamingCheck.ps1`, erhöhte Rechte): am 07.10.2026 auf VM-Windows11TestDev bestanden – HTTP/2.0 ausgehandelt, kein `Transfer-Encoding`, Body ohne Chunk-Rahmen; HTTP/1.1 unverändert chunked (benötigt eine TLS-Bindung, daher nicht Teil der CI)
 
 ---
 
