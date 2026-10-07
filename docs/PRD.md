@@ -3,13 +3,13 @@
 **Version:** 1.0.0-draft  
 **Datum:** 2025-06  
 **Autor:** Olaf (Developer Experts LLC)  
-**Status:** Draft
+**Status:** Draft (Stand der Umsetzung: siehe Abschnitt 10; Architekturentscheidungen und spätere Änderungen: [`DECISIONS.md`](DECISIONS.md))
 
 ---
 
 ## 1. Zusammenfassung
 
-`DX.HttpSys` ist eine framework-agnostische Delphi-Bibliothek, die den Windows-Kernel-HTTP-Stack (**HTTP.sys / httpapi.dll v2.0**) als vollständig abstrahierte, eigenständige Komponente zugänglich macht. Darüber hinaus werden dünne Adapter-Units bereitgestellt, die `DX.HttpSys` als Server-Engine in bestehende Delphi-Webframeworks einbinden – initial für **WiRL** und **WebBroker**.
+`DX.HttpSys` ist eine framework-agnostische Delphi-Bibliothek, die den Windows-Kernel-HTTP-Stack (**HTTP.sys / httpapi.dll v2.0**) als vollständig abstrahierte, eigenständige Komponente zugänglich macht. Darüber hinaus werden dünne Adapter-Units bereitgestellt, die `DX.HttpSys` als Server-Engine in bestehende Delphi-Webframeworks einbinden – initial für **WiRL** und **WebBroker** (inzwischen zusätzlich **Horse**).
 
 Das Projekt folgt dem Prinzip: Der Kern ist unabhängig, die Adapter sind dünn.
 
@@ -224,14 +224,18 @@ end;
 ```pascal
 TDXHttpSysServer = class
   // Konfiguration (vor Start setzen)
-  property Port:          Word;
   property QueueLength:   Cardinal;   // Default: 1000
-  property ThreadCount:   Integer;    // Default: CPUCount * 2
+  property ThreadCount:   Integer;    // Default: Max(2, CPUCount * 2)
+  property ServerHeader:  string;     // Default: 'DX.HttpSys/1.0'
   property Handler:       IDXHttpSysRequestHandler;
+  property OnError:       TOnHttpSysError;
 
-  // URL-Management
-  procedure AddUrlPrefix(const APrefix: string; AContext: UInt64 = 0);
+  // URL-Management – der einzige Bind-Mechanismus (es gibt keine Port-Property)
+  procedure AddUrlPrefix(const APrefix: string; AContext: HTTP_URL_CONTEXT = 0);
   procedure RemoveUrlPrefix(const APrefix: string);
+  procedure ClearUrlPrefixes;
+  class function BuildPrefix(AScheme: TDXScheme; const AHost: string;
+    APort: Word; const APath: string): string;   // formatiert nur, bindet nicht
 
   // Lifecycle
   procedure Start;
@@ -244,6 +248,8 @@ end;
 - `http://+:8080/` – alle Netzwerkinterfaces (erfordert URL-ACL oder Admin-Rechte)
 - `http://localhost:8080/` – nur loopback (keine erhöhten Rechte nötig)
 - `https://+:443/myapi/` – TLS, Zertifikat via `netsh http add sslcert` vorab binden
+
+`AddUrlPrefix` nimmt ein **vollständiges** Präfix und prüft es sofort (Beginn mit `http://`/`https://`, nicht-leerer Host, abschließendes `/`). Da der Pfad Teil des Präfixes ist, können sich mehrere Server – auch in verschiedenen Prozessen – einen Port teilen; HTTP.sys routet nach dem längsten passenden Präfix. Schlägt das Binden mit „Zugriff verweigert“ fehl, nennt die Fehlermeldung das Präfix und das einmalig auszuführende `netsh http add urlacl`-Kommando (siehe `DECISIONS.md` A-20).
 
 ### 5.2 TDXHttpSysRequest
 
@@ -262,8 +268,11 @@ TDXHttpSysRequest = class
   property RemoteIP:     string;
   property RequestId:    HTTP_REQUEST_ID;  // intern für Response benötigt
   property UrlContext:   HTTP_URL_CONTEXT; // Routing-Hint vom UrlGroup-Setup
+  property ProtocolVersion: THTTP_VERSION; // 1.0 / 1.1 / 2.0 (HTTP/2) / 3.0 (HTTP/3)
 end;
 ```
+
+`ProtocolVersion` wird aus den HTTP.sys-Request-Flags (`HTTP_REQUEST_FLAG_HTTP3`/`_HTTP2`, maßgeblich) bzw. der Version der Request-Zeile abgeleitet. HTTP.sys handelt HTTP/2 auf TLS-Listenern per ALPN standardmäßig aus (Windows 10 / Server 2016+), auf reinen `http`-Listenern bleibt es bei HTTP/1.x.
 
 ### 5.3 TDXHttpSysResponse
 
@@ -277,8 +286,28 @@ TDXHttpSysResponse = class
   procedure SetBody(const AText: string; const AContentType: string = 'text/plain; charset=utf-8');
   procedure Send;     // ruft HttpSendHttpResponse; darf nur einmal aufgerufen werden
   property  Sent: Boolean;
+
+  // Streaming (z. B. Server-Sent Events) – Abschnitt 5.3.1
+  procedure BeginStream;                          // Header ohne Content-Length
+  function  SendChunk(const AData: TBytes): Boolean;  // False = Stream vorbei
+  procedure EndStream;
+  property  Streaming: Boolean;
+  property  Cancelled: Boolean;                   // True beim Herunterfahren
+  property  ProtocolVersion: THTTP_VERSION;       // Protokoll des beantworteten Requests
 end;
 ```
+
+#### 5.3.1 Streaming und Protokollversionen (HTTP/2)
+
+`BeginStream`/`SendChunk`/`EndStream` liefern langlebige Antworten ohne `Content-Length` (z. B. `text/event-stream`). Das Body-Framing richtet sich nach `ProtocolVersion` des Requests; Handler-Code ist für alle Fälle identisch:
+
+| Protokoll | Framing | Header | Stream-Ende |
+|---|---|---|---|
+| HTTP/1.1 | `Transfer-Encoding: chunked`, Chunk-Framing schreibt DX.HttpSys selbst (HTTP.sys framt nicht) | `Transfer-Encoding: chunked` | Terminal-Chunk `0\r\n\r\n` |
+| HTTP/2, HTTP/3 | Daten unverändert an HTTP.sys (erzeugt die DATA-Frames) | kein `Transfer-Encoding`, keine verbindungsspezifischen Header | leerer Send mit `DISCONNECT` (beendet den Stream, nicht die Verbindung) |
+| HTTP/1.0 | Close-delimited | kein `Transfer-Encoding`, `Connection: close` | leerer Send mit `DISCONNECT` |
+
+Header, die das Protokoll des Clients verbietet, werden beim Senden verworfen: `Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding`, `Upgrade` bei HTTP/2+ (RFC 9113 §8.2.2), `Transfer-Encoding` bei HTTP/1.0. `SendChunk` liefert `False`, wenn der Client die Verbindung getrennt hat oder der Server herunterfährt; echte Sendefehler lösen `EDXHttpSysError` aus. Ein vom Handler begonnener, aber nicht beendeter Stream wird vom Worker abgeschlossen. Jeder Stream belegt einen Worker-Thread für seine gesamte Dauer. HTTP/2 lässt sich bei Bedarf je TLS-Bindung (`netsh http add sslcert … disablehttp2=enable`) oder global (`EnableHttp2Tls = 0`) abschalten. Details und Begründung: `DECISIONS.md` A-21; der Live-Check über echtes HTTP/2 (erhöhte Rechte nötig): `tests-integration/Http2StreamingCheck.ps1`.
 
 ### 5.4 Threading-Modell
 
@@ -287,7 +316,7 @@ TDXHttpSysServer
   └── TDXHttpSysWorkerPool
         ├── TDXHttpSysReceiverThread   (1x, blockierender HttpReceiveHttpRequest-Loop)
         │     │  PostRequest → TDXHttpSysPendingQueue
-        └── TDXHttpSysWorkerThread[]   (N×, konfigurierbar, default: CPUCount*2)
+        └── TDXHttpSysWorkerThread[]   (N×, konfigurierbar, default: Max(2, CPUCount*2))
               └── Dequeue → IDXHttpSysRequestHandler.HandleRequest
 ```
 
@@ -382,11 +411,13 @@ DX.HttpSys/
 ├── DX.HttpSys.groupproj                       ← Projektgruppe (Packages + Tests)
 ├── docs/
 │   ├── PRD.md                                ← dieses Dokument
+│   ├── DECISIONS.md                          ← Architektur-/Prozessentscheidungen (A-1 …)
 │   └── Delphi Style Guide EN.md
 ├── src/
 │   ├── DX.HttpSys.Core.dpk / .dproj          ← Core-Package (kein Framework-Dep, RTL only)
 │   ├── DX.HttpSys.WiRL.dpk / .dproj          ← WiRL-Adapter-Package
 │   ├── DX.HttpSys.WebBroker.dpk / .dproj     ← WebBroker-Adapter-Package
+│   ├── DX.HttpSys.Horse.dpk / .dproj         ← Horse-Adapter-Package
 │   ├── Core/
 │   │   ├── DX.HttpSys.Api.Types.pas          ← HTTP_* Records, Enums, Constants
 │   │   ├── DX.HttpSys.Api.pas                ← httpapi.dll Wrapper (GetProcAddress)
@@ -395,15 +426,21 @@ DX.HttpSys/
 │   │   ├── DX.HttpSys.ThreadPool.pas         ← Receiver + Worker Threads
 │   │   └── DX.HttpSys.Server.pas             ← TDXHttpSysServer (öffentliche API)
 │   └── Adapters/
-│       ├── DX.HttpSys.WiRL.pas               ← WiRL-Adapter (IWiRLServer)
-│       └── DX.HttpSys.WebBroker.pas          ← WebBroker-Adapter
+│       ├── DX.HttpSys.WiRL.pas               ← WiRL-Adapter (WiRL-4.x-Release-API)
+│       ├── DX.HttpSys.WiRL.REST.pas          ← WiRL-Adapter (master-API)
+│       ├── DX.HttpSys.WebBroker.pas          ← WebBroker-Adapter
+│       └── DX.HttpSys.Horse.pas              ← Horse-Provider (über dem WebBroker-Dispatcher)
 ├── tests/
 │   ├── DX.HttpSys.Tests.dpr / .dproj         ← DUnitX-Console-Runner
-│   └── Test.DX.HttpSys.Sample.pas            ← Platzhalter-Fixture (ersetzen)
-├── demo/                                       ← Demos (geplant)
+│   └── Test.DX.HttpSys.*.pas                 ← Api, Server, Url, WebBroker, Stress, Soak, Streaming
+├── tests-integration/                          ← optionale Tests mit Fremd-Frameworks (WiRL, Horse)
+│   └── Http2StreamingCheck.ps1               ← HTTP/2-Live-Check (erhöhte Rechte)
+├── demo/                                       ← Demos (teilen sich Port 80 über Pfadpräfixe)
 │   ├── 01.StandaloneServer/                  ← Layer 2 direkt, kein Framework
 │   ├── 02.WiRL/                              ← WiRL + DX.HttpSys
-│   └── 03.WebBroker/                         ← WebBroker + DX.HttpSys
+│   ├── 03.WebBroker/                         ← WebBroker + DX.HttpSys
+│   ├── 04.Horse/                             ← Horse + DX.HttpSys
+│   └── 07.Sse/                               ← Server-Sent Events (Streaming)
 ├── libs/
 │   └── DUnitX/                                ← Test-Framework (Git-Submodul)
 ├── build-scripts/
@@ -420,7 +457,7 @@ DX.HttpSys/
 
 - **Zielplattform:** Windows (32-bit und 64-bit), Delphi 11.3+
 - **UI-Framework-neutral:** Der Core hängt an keinem GUI-Framework und ist damit in jeder Windows-Anwendungsart einsetzbar – Console, Windows-Service, **VCL** und **FMX**. Bei klassischen „headless" Server-Anwendungen spielt das eine untergeordnete Rolle, ermöglicht aber z. B. einen eingebetteten HTTP.sys-Server direkt in einer VCL- oder FMX-Desktop-Anwendung.
-- **Compilierbarkeit auf Nicht-Windows:** Die Core-Units kompilieren unter `{$IFDEF MSWINDOWS}` Guards. Auf macOS/Linux sind die API-Funktionspointer `nil`; ein Aufruf von `TDXHttpSysServer.Start` wirft `EDXHttpSysNotSupported`.
+- **Nur Windows:** Die Core-Units sind reiner Windows-Code. Die ursprünglich vorgesehenen `{$IFDEF MSWINDOWS}`-Guards für eine Compilierbarkeit auf Nicht-Windows-Zielen wurden bewusst entfernt (`DECISIONS.md` A-1).
 - **Keine externen Abhängigkeiten** im Core (httpapi.dll ist Bestandteil von Windows).
 
 ### 9.2 Threading
@@ -447,7 +484,7 @@ HTTP.sys setzt standardmäßig `Microsoft-HTTPAPI/2.0` als `Server`-Header. Eige
 Die Bibliothek soll den Performancevorteil des Kernel-Stacks möglichst verlustfrei weiterreichen. Der Eigen-Overhead des Cores gegenüber einem rohen `HttpReceiveHttpRequest`/`HttpSendHttpResponse`-Zyklus soll vernachlässigbar bleiben.
 
 - **Zero-/Low-Copy:** Request-/Response-Bodies werden ohne unnötige Pufferkopien verarbeitet; vorhandene HTTP.sys-Strukturen werden direkt überlagert statt umkopiert.
-- **Thread-Pool:** Konfigurierbarer Worker-Pool (Default analog HTTP.sys 32 Threads), keine Thread-Erzeugung pro Request.
+- **Thread-Pool:** Konfigurierbarer Worker-Pool (`ThreadCount`, Default `Max(2, CPUCount * 2)`), keine Thread-Erzeugung pro Request.
 - **Keep-Alive:** Nutzung des Kernel-Level-Connection-Cachings von HTTP.sys.
 - **Messbare Zielwerte:** Reproduzierbare Benchmarks (z. B. `wrk`/`bombardier`) als Teil der CI; Richtwert: Durchsatz und p99-Latenz auf dem Niveau von `THttpApiServer` (mORMot) bzw. TMS Sparkle, da alle denselben Kernel-Stack nutzen. Regressionen gegenüber der Baseline lassen den Benchmark-Lauf fehlschlagen.
 
@@ -467,40 +504,51 @@ Stabilität ist explizites Primärziel. Die Implementierung muss unter Dauer- un
 ## 10. Implementierungs-Roadmap
 
 ### Milestone 1 – API Foundation
-- [ ] `DX.HttpSys.Api.Types.pas` – alle WinAPI-Strukturen
-- [ ] `DX.HttpSys.Api.pas` – GetProcAddress-Loader + CheckResult
-- [ ] Minimaler Smoke-Test (httpapi.dll laden, Version abfragen)
+- [x] `DX.HttpSys.Api.Types.pas` – alle WinAPI-Strukturen
+- [x] `DX.HttpSys.Api.pas` – GetProcAddress-Loader + CheckResult
+- [x] Minimaler Smoke-Test (httpapi.dll laden, Version abfragen)
 
 ### Milestone 2 – Core Server (Single-Threaded)
-- [ ] `DX.HttpSys.Request.pas`
-- [ ] `DX.HttpSys.Response.pas`
-- [ ] `DX.HttpSys.Server.pas` (synchron, ohne ThreadPool)
-- [ ] Demo 01: Hello-World GET-Response
+- [x] `DX.HttpSys.Request.pas`
+- [x] `DX.HttpSys.Response.pas`
+- [x] `DX.HttpSys.Server.pas` (synchron, ohne ThreadPool)
+- [x] Demo 01: Hello-World GET-Response
 
 ### Milestone 3 – Threading
-- [ ] `DX.HttpSys.ThreadPool.pas`
-- [ ] Integration in `TDXHttpSysServer`
+- [x] `DX.HttpSys.ThreadPool.pas`
+- [x] Integration in `TDXHttpSysServer`
 - [ ] Load-Test mit Artillery / wrk
 
 ### Milestone 4 – WiRL-Adapter
-- [ ] `DX.HttpSys.WiRL.pas`
-- [ ] Demo 02: WiRL REST-Resource via HTTP.sys
+- [x] `DX.HttpSys.WiRL.pas`
+- [x] Demo 02: WiRL REST-Resource via HTTP.sys
 
 ### Milestone 5 – WebBroker-Adapter
-- [ ] `DX.HttpSys.WebBroker.pas`
-- [ ] Demo 03: WebBroker-WebModule via HTTP.sys
+- [x] `DX.HttpSys.WebBroker.pas`
+- [x] Demo 03: WebBroker-WebModule via HTTP.sys
 
 ### Milestone 6 – Test-Suite & Härtung (Stabilitätsnachweis)
-- [ ] DUnitX-Unit-Tests (Layer 1 + Core) mit hoher Abdeckung
-- [ ] Integrationstests gegen real laufenden `TDXHttpSysServer`
-- [ ] Concurrency-/Stress-Harness („Hämmern" mit vielen parallelen Requests)
-- [ ] Soak-Test + Leak-/Handle-Prüfung (FastMM)
+- [x] DUnitX-Unit-Tests (Layer 1 + Core) mit hoher Abdeckung
+- [x] Integrationstests gegen real laufenden `TDXHttpSysServer`
+- [x] Concurrency-/Stress-Harness („Hämmern" mit vielen parallelen Requests)
+- [x] Soak-Test + Leak-/Handle-Prüfung (FastMM)
 - [ ] Performance-Baseline (`wrk`/`bombardier`) als CI-Gate
 
 ### Milestone 7 – Packaging & Dokumentation
-- [ ] Delphi-Packages (.dproj)
-- [ ] README mit netsh-Anleitung
-- [ ] XML-Inline-Dokumentation aller öffentlichen Symbole
+- [x] Delphi-Packages (.dproj)
+- [x] README mit netsh-Anleitung
+- [x] XML-Inline-Dokumentation aller öffentlichen Symbole
+
+### Milestone 8 – Horse-Adapter
+- [x] `DX.HttpSys.Horse.pas` (Provider über dem WebBroker-Dispatcher), Demo 04
+
+### Milestone 9 – Bind-API für gemeinsame Ports
+- [x] `AddUrlPrefix` als einziger, geprüfter Bind-Mechanismus; Demos teilen sich Port 80 über Pfadpräfixe
+
+### Milestone 10 – Streaming & HTTP/2
+- [x] `BeginStream`/`SendChunk`/`EndStream` (SSE), Demo 07
+- [x] Protokollbewusstes Framing (`ProtocolVersion`, HTTP/1.1 chunked, HTTP/2+ durch HTTP.sys, HTTP/1.0 close-delimited)
+- [ ] HTTP/2-Wire-Check (`tests-integration/Http2StreamingCheck.ps1`, erhöhte Rechte) auf einem Rechner mit Administratorrechten durchführen (benötigt eine TLS-Bindung; bisher nicht Teil der CI)
 
 ---
 
@@ -510,9 +558,9 @@ Stabilität ist explizites Primärziel. Die Implementierung muss unter Dauer- un
 |---|---|---|
 | 1 | Lizenz: MIT oder MPL 2.0? | MIT (maximale Kompatibilität) |
 | 2 | GitHub-Repo: unter `omonien` oder neuer Org? | `omonien/DX.HttpSys` |
-| 3 | HTTP/2-Support via HTTP.sys v2? | Später Milestone (HTTP/2 ist in httpapi.dll ab Win10/Server 2016 verfügbar) |
+| 3 | HTTP/2-Support via HTTP.sys v2? | Entschieden: HTTP.sys handelt HTTP/2 auf TLS-Listenern selbst aus (Win10/Server 2016+); die Bibliothek passt Streaming-Framing und Header je Protokoll an (Abschnitt 5.3.1, `DECISIONS.md` A-21). HTTP/3 wird mitgeführt, ist aber nicht getestet |
 | 4 | SSL-Zertifikat-Management-API (netsh-Wrapper)? | Optional, separates Package |
-| 5 | Horse-Adapter (3. Adapter nach WiRL + WebBroker)? | Ja, nach Milestone 5 |
+| 5 | Horse-Adapter (3. Adapter nach WiRL + WebBroker)? | Umgesetzt (Milestone 8) |
 
 ---
 

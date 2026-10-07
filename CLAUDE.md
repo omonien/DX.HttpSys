@@ -13,15 +13,17 @@ targets Windows (Win32/Win64), Delphi 11.3+. See `docs/PRD.md` for the full spec
 ## Structure
 
 - `src/Core/` — framework-agnostic HTTP.sys engine (RTL only)
-- `src/Adapters/` — WiRL and WebBroker adapters
-- `src/*.dpk` / `*.dproj` — runtime packages: `DX.HttpSys.Core`, `DX.HttpSys.WiRL`, `DX.HttpSys.WebBroker`
-- `demo/` — demo applications (planned: Standalone, WiRL, WebBroker)
-- `tests/` — DUnitX console test runner (`DX.HttpSys.Tests.dproj`)
+- `src/Adapters/` — WiRL (two API eras), WebBroker and Horse adapters
+- `src/*.dpk` / `*.dproj` — runtime packages: `DX.HttpSys.Core`, `DX.HttpSys.WiRL`, `DX.HttpSys.WebBroker`, `DX.HttpSys.Horse`
+- `demo/` — demo applications (`01.StandaloneServer`, `02.WiRL`, `03.WebBroker`, `04.Horse`, `07.Sse`); they share port 80 via path prefixes
+- `tests/` — DUnitX console test runner (`DX.HttpSys.Tests.dproj`, 89 tests)
+- `tests-integration/` — optional WiRL/Horse integration tests (sources fetched on demand) and `Http2StreamingCheck.ps1` (HTTP/2 live check, needs elevation)
+- `docs/` — `PRD.md` (German design document), `DECISIONS.md` (architecture decisions A-1 …)
 - `libs/DUnitX/` — test framework (git submodule)
 - `build/` — build output only (git-ignored)
 - `build-scripts/` — `DelphiBuildDPROJ.ps1`
 
-The project group `DX.HttpSys.groupproj` ties the three packages and the test project together.
+The project group `DX.HttpSys.groupproj` ties the packages and the test project together.
 
 ## Build
 
