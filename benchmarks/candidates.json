@@ -1,0 +1,14 @@
+{
+  "$comment": "M0 candidates. exe: program name in the bin folder; args: extra arguments; transport: socket or httpsys (httpsys needs a URL ACL for --host all); port: fixed measurement port per candidate.",
+  "candidates": [
+    { "name": "indy-plain",           "exe": "BenchIndyPlain.exe",      "args": [],                       "transport": "socket",  "port": 8081, "version": "Indy (Delphi 13)" },
+    { "name": "horse2-indy-default",  "exe": "BenchHorseIndy2.exe",     "args": ["--profile", "default"], "transport": "socket",  "port": 8082, "version": "Horse 2.0.14" },
+    { "name": "horse2-indy-tuned",    "exe": "BenchHorseIndy2.exe",     "args": ["--profile", "tuned"],   "transport": "socket",  "port": 8083, "version": "Horse 2.0.14" },
+    { "name": "horse33-indy-default", "exe": "BenchHorseIndy.exe",      "args": ["--profile", "default"], "transport": "socket",  "port": 8084, "version": "Horse 3.3.16" },
+    { "name": "horse33-indy-tuned",   "exe": "BenchHorseIndy.exe",      "args": ["--profile", "tuned"],   "transport": "socket",  "port": 8085, "version": "Horse 3.3.16" },
+    { "name": "dxhttpsys-plain",      "exe": "BenchDXHttpSysPlain.exe", "args": [],                       "transport": "httpsys", "port": 8086, "version": "DX.HttpSys" },
+    { "name": "horse2-dxhttpsys",     "exe": "BenchHorseDXHttpSys.exe", "args": [],                       "transport": "httpsys", "port": 8087, "version": "Horse 2.0.14 + DX.HttpSys" },
+    { "name": "horse33-httpsys",      "exe": "BenchHorseHttpSys33.exe", "args": [],                       "transport": "httpsys", "port": 8088, "version": "Horse 3.3.16 HttpSys" },
+    { "name": "mormot2-async",        "exe": "BenchMormot2Async.exe",   "args": [],                       "transport": "socket",  "port": 8089, "version": "mORMot 2.4-stable" }
+  ]
+}

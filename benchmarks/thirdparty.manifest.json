@@ -1,0 +1,33 @@
+{
+  "$comment": [
+    "Third-party code used ONLY by the M0 benchmark servers under benchmarks/.",
+    "Never checked in, never referenced by any DX.Http core unit.",
+    "Fetch: ./build-scripts/FetchThirdParty.ps1 -Manifest ./benchmarks/thirdparty.manifest.json",
+    "Each entry lands in build/thirdparty/<name>; the benchmark .dproj files expect exactly these names."
+  ],
+  "dependencies": [
+    {
+      "$comment": "HashLoad original, generic provider classes. Bundled Web.WebConst.pas shadows the RTL unit and is excluded.",
+      "name": "Horse2",
+      "repo": "https://github.com/HashLoad/horse.git",
+      "ref": "v2.0.14",
+      "sourcePaths": ["src"],
+      "excludeFiles": ["src/Web.WebConst.pas"]
+    },
+    {
+      "$comment": "Horse 3.3.16 (2026-10-29): non generic THorseProviderAbstract, own HttpSys provider.",
+      "name": "Horse3",
+      "repo": "https://github.com/HashLoad/horse.git",
+      "ref": "3.3.16",
+      "sourcePaths": ["src"],
+      "excludeFiles": ["src/Web.WebConst.pas"]
+    },
+    {
+      "$comment": "mORMot 2, branch 2.4-stable. Yardstick only (THttpAsyncServer).",
+      "name": "mORMot2",
+      "repo": "https://github.com/synopse/mORMot2.git",
+      "ref": "2.4-stable",
+      "sourcePaths": ["src", "src/core", "src/net", "src/lib", "src/crypt"]
+    }
+  ]
+}
