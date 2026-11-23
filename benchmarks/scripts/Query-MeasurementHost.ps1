@@ -22,3 +22,11 @@ Write-Host ("  " + ((& powercfg /getactivescheme) -join ' '))
 Write-Host '=== Elevated'
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 Write-Host ("  " + $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
+Write-Host '=== Firewall profiles'
+try { Get-NetFirewallProfile -ErrorAction Stop | ForEach-Object { Write-Host "  $($_.Name) enabled=$($_.Enabled) inbound=$($_.DefaultInboundAction)" } } catch { Write-Host "  query failed: $($_.Exception.Message)" }
+try { Get-NetConnectionProfile -ErrorAction Stop | ForEach-Object { Write-Host "  network $($_.InterfaceAlias) category=$($_.NetworkCategory)" } } catch { Write-Host "  network profile query failed" }
+Write-Host '=== IPv4 addresses'
+Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne '127.0.0.1' } | ForEach-Object { Write-Host "  $($_.InterfaceAlias) $($_.IPAddress)/$($_.PrefixLength)" }
+Write-Host '=== Administrators group member (filtered token)'
+$groups = [Security.Principal.WindowsIdentity]::GetCurrent().Groups | ForEach-Object { $_.Value }
+Write-Host ("  " + ($groups -contains 'S-1-5-32-544'))
