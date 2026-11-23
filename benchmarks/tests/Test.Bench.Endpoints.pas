@@ -85,10 +85,10 @@ begin
   R := BenchDispatch('GET', '/bytes/64k', 0);
   Assert.AreEqual(65536, Length(R.Body));
   Assert.AreEqual(cBenchContentTypeBinary, R.ContentType);
-  Assert.AreEqual(Byte(Ord('a')), R.Body[0]);
+  Assert.AreEqual(Ord('a'), Integer(R.Body[0]));
   R := BenchDispatch('GET', '/bytes/1m', 0);
   Assert.AreEqual(1048576, Length(R.Body));
-  Assert.AreEqual(Byte(Ord('a') + (1048575 mod 26)), R.Body[1048575]);
+  Assert.AreEqual(Ord('a') + (1048575 mod 26), Integer(R.Body[1048575]));
 end;
 
 procedure TBenchEndpointsTests.EchoAnswersLength;

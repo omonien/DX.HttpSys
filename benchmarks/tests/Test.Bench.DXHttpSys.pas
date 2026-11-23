@@ -108,7 +108,7 @@ var
 begin
   R := FClient.Get(Url('/bytes/64k'));
   Assert.AreEqual(200, R.StatusCode);
-  Assert.AreEqual(Int64(65536), R.ContentStream.Size);
+  Assert.AreEqual(65536, Integer(R.ContentStream.Size));
 end;
 
 procedure TBenchDXHttpSysTests.Bytes1m;
@@ -117,7 +117,7 @@ var
 begin
   R := FClient.Get(Url('/bytes/1m'));
   Assert.AreEqual(200, R.StatusCode);
-  Assert.AreEqual(Int64(1048576), R.ContentStream.Size);
+  Assert.AreEqual(1048576, Integer(R.ContentStream.Size));
 end;
 
 procedure PostEcho(AClient: THTTPClient; const AUrl: string; ASize: Integer);
