@@ -55,9 +55,9 @@ var
 begin
   R := BenchDispatch('GET', '/plaintext', 0);
   Assert.AreEqual(200, R.Status);
-  Assert.AreEqual(13, Length(R.Body));
-  Assert.AreEqual(cBenchPlaintext, TEncoding.UTF8.GetString(R.Body));
-  Assert.AreEqual(cBenchContentTypeText, R.ContentType);
+  Assert.AreEqual(13, Integer(Length(R.Body)));
+  Assert.AreEqual(string(cBenchPlaintext), string(TEncoding.UTF8.GetString(R.Body)));
+  Assert.AreEqual(string(cBenchContentTypeText), string(R.ContentType));
 end;
 
 procedure TBenchEndpointsTests.JsonHasMessage;
@@ -67,12 +67,12 @@ var
 begin
   R := BenchDispatch('GET', '/json', 0);
   Assert.AreEqual(200, R.Status);
-  Assert.AreEqual(cBenchContentTypeJson, R.ContentType);
-  Assert.AreEqual(27, Length(R.Body));
+  Assert.AreEqual(string(cBenchContentTypeJson), string(R.ContentType));
+  Assert.AreEqual(27, Integer(Length(R.Body)));
   LValue := TJSONObject.ParseJSONValue(TEncoding.UTF8.GetString(R.Body));
   try
     Assert.IsNotNull(LValue);
-    Assert.AreEqual(cBenchPlaintext, (LValue as TJSONObject).GetValue<string>('message'));
+    Assert.AreEqual(string(cBenchPlaintext), string((LValue as TJSONObject).GetValue<string>('message')));
   finally
     LValue.Free;
   end;
@@ -83,11 +83,11 @@ var
   R: TBenchResponse;
 begin
   R := BenchDispatch('GET', '/bytes/64k', 0);
-  Assert.AreEqual(65536, Length(R.Body));
-  Assert.AreEqual(cBenchContentTypeBinary, R.ContentType);
+  Assert.AreEqual(65536, Integer(Length(R.Body)));
+  Assert.AreEqual(string(cBenchContentTypeBinary), string(R.ContentType));
   Assert.AreEqual(Ord('a'), Integer(R.Body[0]));
   R := BenchDispatch('GET', '/bytes/1m', 0);
-  Assert.AreEqual(1048576, Length(R.Body));
+  Assert.AreEqual(1048576, Integer(Length(R.Body)));
   Assert.AreEqual(Ord('a') + (1048575 mod 26), Integer(R.Body[1048575]));
 end;
 
