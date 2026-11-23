@@ -120,6 +120,13 @@ pwsh ./benchmarks/scripts/Run-Matrix.ps1 -Mode LoadOnly -Target http://messhost:
 
 Die Prozess-CSV des Servers anschließend in den Ergebnisordner kopieren.
 
+### Lastgenerator Mac ohne Shell (Forge run_remote)
+
+`loadgen/MacK6/BenchMacK6` (OSX64) läuft über PAServer auf dem Mac: `install v2.4.0` legt k6 ohne Admin-Rechte
+unter `~/dxbench/k6/<version>/` ab, `probe <url>` prüft die Erreichbarkeit des Messhosts,
+`run <version> <script-url> <name> KEY=VALUE ...` startet k6 mit `GODEBUG=http2client=0` und schreibt
+`out/<name>.json` (mit `collect: out` zurück zur Forge).
+
 ### Notlösung auf einem Host
 
 ```powershell
