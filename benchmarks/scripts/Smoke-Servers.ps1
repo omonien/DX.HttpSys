@@ -118,10 +118,10 @@ $allOk = $true
 foreach ($t in $targets) {
     $c = $t.Candidate
     Write-Host "=== $($c.name) ($($t.Exe))"
-    $entry = [ordered]@{ candidate = $c.name; exe = $t.Exe; started = $false; checks = @(); ok = $false }
+    $entry = [ordered]@{ candidate = $c.name; exe = $t.Exe; started = $false; checks = @(); ok = $false; keepalive = $null; load = $null }
     $server = $null
     try {
-        $server = Start-BenchServer -Candidate $c -BinDir (Split-Path -Parent $t.Exe) -BindHost 'localhost' -Seconds 120 -LogDir $outDir
+        $server = Start-BenchServer -Candidate $c -Exe $t.Exe -BindHost 'localhost' -Seconds 120 -LogDir $outDir
         $entry.started = $true
         $base = $server.BaseUrl
         $client = New-Http11Client

@@ -75,7 +75,8 @@ function Get-BenchEnvironment {
 function Start-BenchServer {
     param(
         [Parameter(Mandatory)] $Candidate,
-        [Parameter(Mandatory)] [string]$BinDir,
+        [string]$BinDir,
+        [string]$Exe,
         [string]$BindHost = 'localhost',
         [int]$Port = 0,
         [int]$Seconds = 600,
@@ -83,7 +84,7 @@ function Start-BenchServer {
         [int]$HealthTimeoutSec = 30
     )
     if ($Port -le 0) { $Port = [int]$Candidate.port }
-    $exe = Join-Path $BinDir $Candidate.exe
+    $exe = if ($Exe) { $Exe } else { Join-Path $BinDir $Candidate.exe }
     if (-not (Test-Path $exe)) { throw "Server binary not found: $exe" }
     if (-not $LogDir) { $LogDir = [IO.Path]::GetTempPath() }
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
