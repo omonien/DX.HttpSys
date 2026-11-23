@@ -19,7 +19,7 @@ program BenchMacK6;
 uses
   System.SysUtils, System.Classes, System.IOUtils, System.Zip,
   System.Net.HttpClient, System.Net.URLClient,
-  Posix.Stdlib, Posix.Stdio, Posix.SysStat;
+  Posix.Stdlib;
 
 function HomeDir: string;
 begin
@@ -42,35 +42,25 @@ begin
   Result := #39 + StringReplace(AText, #39, #39'"'#39'"'#39, [rfReplaceAll]) + #39;
 end;
 
-// Runs a shell command and returns its combined output.
+// Runs a shell command and returns its combined output (system() with the
+// output redirected into a temporary file; the RTL has no popen import).
 function RunCapture(const ACommand: string; out AExitCode: Integer): string;
 var
-  LPipe: PIOFile;
-  LBuffer: array[0..4095] of AnsiChar;
-  LBytes: TBytes;
-  LStream: TBytesStream;
-  LRead: Integer;
+  LFile: string;
   LCmd: TBytes;
 begin
-  LStream := TBytesStream.Create;
-  try
-    LCmd := TEncoding.UTF8.GetBytes(ACommand + ' 2>&1' + #0);
-    LPipe := popen(MarshaledAString(@LCmd[0]), 'r');
-    if LPipe = nil then
-      raise Exception.Create('popen failed');
-    repeat
-      LRead := fread(@LBuffer[0], 1, SizeOf(LBuffer), LPipe);
-      if LRead > 0 then
-        LStream.WriteBuffer(LBuffer[0], LRead);
-    until LRead <= 0;
-    AExitCode := pclose(LPipe);
-    if AExitCode > 255 then
-      AExitCode := AExitCode shr 8;
-    LBytes := Copy(LStream.Bytes, 0, LStream.Size);
-    Result := TEncoding.UTF8.GetString(LBytes);
-  finally
-    LStream.Free;
-  end;
+  LFile := TPath.Combine(TPath.GetTempPath, 'benchmack6_' + IntToStr(Random(MaxInt)) + '.txt');
+  LCmd := TEncoding.UTF8.GetBytes('(' + ACommand + ') > ' + ShellQuote(LFile) + ' 2>&1' + #0);
+  AExitCode := _system(MarshaledAString(@LCmd[0]));
+  if AExitCode > 255 then
+    AExitCode := AExitCode shr 8;
+  if TFile.Exists(LFile) then
+  begin
+    Result := TFile.ReadAllText(LFile, TEncoding.UTF8);
+    TFile.Delete(LFile);
+  end
+  else
+    Result := '';
 end;
 
 function IsAppleSilicon: Boolean;
@@ -200,6 +190,7 @@ end;
 var
   LMode: string;
 begin
+  Randomize;
   try
     if ParamCount < 1 then
       raise Exception.Create('usage: install|version|probe|run ...');
