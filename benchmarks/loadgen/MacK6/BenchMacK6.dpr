@@ -38,7 +38,8 @@ end;
 
 function ShellQuote(const AText: string): string;
 begin
-  Result := '''' + StringReplace(AText, '''', '''"''"''', [rfReplaceAll]) + '''';
+  // #39 is the single quote; written as a char code to keep the source simple.
+  Result := #39 + StringReplace(AText, #39, #39'"'#39'"'#39, [rfReplaceAll]) + #39;
 end;
 
 // Runs a shell command and returns its combined output.
