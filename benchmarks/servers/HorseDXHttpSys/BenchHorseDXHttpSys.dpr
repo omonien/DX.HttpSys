@@ -35,10 +35,10 @@ begin
     LOptions := BenchParseOptions;
     RegisterBenchRoutes;
     BenchStartWatchdog(LOptions);
-    THorseProviderHttpSys<THorse>.Port := LOptions.Port;
-    THorseProviderHttpSys<THorse>.Host := LOptions.HttpSysHost;
     THorseProviderHttpSys<THorse>.BasePath := '';
-    THorseProviderHttpSys<THorse>.Listen(
+    // Listen(ACallback) falls back to the default port and host and ignores the
+    // Port and Host properties (adapter finding for M8), so pass both explicitly.
+    THorseProviderHttpSys<THorse>.Listen(LOptions.Port, LOptions.HttpSysHost,
       procedure(AHorse: THorse)
       begin
         BenchReady('horse2-dxhttpsys', LOptions);
