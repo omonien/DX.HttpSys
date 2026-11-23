@@ -59,10 +59,10 @@ function TMormotBench.DoRequest(Ctxt: THttpServerRequestAbstract): cardinal;
 var
   LPath: RawUtf8;
   LIsGet: Boolean;
-  P: Integer;
+  P: PtrUInt;
 begin
   LPath := Ctxt.Url;
-  P := Pos('?', LPath);
+  P := PosExChar('?', LPath);
   if P > 0 then
     LPath := Copy(LPath, 1, P - 1);
   LIsGet := Ctxt.Method = 'GET';
