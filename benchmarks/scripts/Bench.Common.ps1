@@ -93,23 +93,27 @@ function Start-BenchServer {
     $argList = @('--port', "$Port", '--host', $BindHost, '--seconds', "$Seconds") + @($Candidate.args)
     $proc = Start-Process -FilePath $exe -ArgumentList $argList -PassThru -NoNewWindow `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    # Socket servers bind IPv4 only; probe them on 127.0.0.1 (localhost may resolve to ::1 first).
     $probeHost = $BindHost
     if ($probeHost -in @('all', '+', '0.0.0.0', '*')) { $probeHost = 'localhost' }
+    if ($Candidate.transport -eq 'socket' -and $probeHost -eq 'localhost') { $probeHost = '127.0.0.1' }
     $base = "http://$($probeHost):$Port"
     $deadline = (Get-Date).AddSeconds($HealthTimeoutSec)
     $ok = $false
+    $lastError = ''
     while ((Get-Date) -lt $deadline) {
-        if ($proc.HasExited) { break }
+        if ($proc.HasExited) { $lastError = "process exited with code $($proc.ExitCode)"; break }
         try {
-            $r = Invoke-WebRequest -Uri "$base/plaintext" -UseBasicParsing -TimeoutSec 2
+            $r = Invoke-WebRequest -Uri "$base/plaintext" -UseBasicParsing -TimeoutSec 5
             if ($r.StatusCode -eq 200) { $ok = $true; break }
-        } catch { Start-Sleep -Milliseconds 250 }
+            $lastError = "status $($r.StatusCode)"
+        } catch { $lastError = $_.Exception.Message; Start-Sleep -Milliseconds 250 }
     }
     if (-not $ok) {
         $out = if (Test-Path $stdout) { Get-Content -Raw $stdout } else { '' }
         $err = if (Test-Path $stderr) { Get-Content -Raw $stderr } else { '' }
         if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-        throw "Server $($Candidate.name) did not become healthy on $base. stdout: $out stderr: $err"
+        throw "Server $($Candidate.name) did not become healthy on $base. last error: $lastError stdout: $out stderr: $err"
     }
     return [pscustomobject]@{ Process = $proc; StdOut = $stdout; StdErr = $stderr; BaseUrl = $base; Port = $Port }
 }
